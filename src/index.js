@@ -138,19 +138,21 @@ app.get('/api/health', (req, res) => {
 const CRON_SCHEDULE = process.env.CRAWL_CRON || '0 * * * *';
 
 cron.schedule(CRON_SCHEDULE, async () => {
-  try {
-    const before = db.prepare(`SELECT MAX(created_at) as t FROM notices`).get().t || 0;
-    const result = await crawlAll();
+    try {
+        const before = db.prepare('SELECT MAX(created_at) as t FROM notices').get().t || 0; // 예외 방지용 기본값 추가 권장
+        const result = await crawlAll();
 
-    if (result.totalNew > 0) {
-      const newItems = db.prepare(`SELECT * FROM notices WHERE created_at > ? ORDER BY created_at DESC`)
-        .all(before);
-      await notifyNewNotices(newItems);
+        if (result.totalNew > 0) {
+            const newItems = db.prepare('SELECT * FROM notices WHERE created_at > ? ORDER BY id DESC').all(before);
+            await notifyNewNotices(newItems);
+        }
+    } catch (err) {
+        console.error('스케줄 크롤 실패:', err);
     }
-  } catch (err) {
-    console.error('스케줄 크롤 실패:', err);
-  }
-}, { timezone: 'Asia/Seoul' });
+}, {
+    timezone: 'Asia/Seoul'
+}); 
+
 
 console.log(`⏰ 스케줄러 등록됨: ${CRON_SCHEDULE} (Asia/Seoul)`);
 
