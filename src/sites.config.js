@@ -101,17 +101,17 @@ const SITES = [
     linkBase: 'https://www.brcn.go.kr',
   },
 
-  // ========== 청양군 (신규 추가) ==========
+  // ========== 청양군 (URL 수정됨) ==========
   {
     id: 'cheongyang-notice',
     region: '청양',
     name: '청양군청 공지사항',
-    listUrl: 'https://www.cheongyang.go.kr/kr.do',
+    listUrl: 'https://www.cheongyang.go.kr/cop/bbs/BBSMSTR_000000000032/selectBoardList.do',
     type: 'generic',
     encoding: 'utf-8',
-    rowSelector: 'table tbody tr',
-    titleSelector: 'td a, td.title a',
-    dateSelector: 'td.date, td:nth-child(4)',
+    rowSelector: 'table tbody tr, .board_list tr',
+    titleSelector: 'td.subject a, td.title a, td a',
+    dateSelector: 'td.date, td:nth-child(4), td:nth-child(5)',
     linkBase: 'https://www.cheongyang.go.kr',
   },
 
@@ -120,7 +120,7 @@ const SITES = [
     id: 'iksan-notice',
     region: '익산',
     name: '익산시청 고시공고',
-    listUrl: 'https://www.iksan.go.kr/index.iksan?menuCd=DOM_000002003009003000',
+    listUrl: 'https://www.iksan.go.kr/index.iksan?menuCd=DOM_000005103007003000',
     type: 'generic',
     encoding: 'utf-8',
     rowSelector: '.board_list tbody tr, table tbody tr',
