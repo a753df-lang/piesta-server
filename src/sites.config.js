@@ -115,12 +115,12 @@ const SITES = [
     linkBase: 'https://www.cheongyang.go.kr',
   },
 
-  // ========== 익산시 (URL 수정됨) ==========
+  // ========== 익산시 (URL 최종 수정) ==========
   {
     id: 'iksan-notice',
     region: '익산',
     name: '익산시청 고시공고',
-    listUrl: 'https://www.iksan.go.kr/index.iksan?menuCd=DOM_000005103007003000',
+    listUrl: 'https://www.iksan.go.kr/index.iksan?menuCd=DOM_000002003009003000',
     type: 'generic',
     encoding: 'utf-8',
     rowSelector: '.board_list tbody tr, table tbody tr',
