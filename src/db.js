@@ -1,4 +1,4 @@
-// db.js - SQLite 데이터베이스 관리
+// db.js - SQLite 데이터베이스 관리 (사용자 사이트 지원 추가)
 const Database = require('better-sqlite3');
 const path = require('path');
 
@@ -7,7 +7,6 @@ const db = new Database(DB_PATH);
 
 db.pragma('journal_mode = WAL');
 
-// 테이블 생성
 db.exec(`
   CREATE TABLE IF NOT EXISTS notices (
     id TEXT PRIMARY KEY,
@@ -48,57 +47,47 @@ db.exec(`
     regions TEXT,
     created_at INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS user_sites (
+    id TEXT PRIMARY KEY,
+    region TEXT NOT NULL,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    type TEXT,
+    created_at INTEGER NOT NULL,
+    last_status TEXT,
+    last_error TEXT,
+    success_count INTEGER DEFAULT 0,
+    fail_count INTEGER DEFAULT 0
+  );
 `);
 
-// 공고 upsert (이미 있으면 무시, 없으면 새로 등록)
 const insertNoticeStmt = db.prepare(`
   INSERT OR IGNORE INTO notices
     (id, site_id, region, org, title, url, posted_date, deadline, raw_text, summary, is_new, created_at, updated_at)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
 `);
-
 const findByIdStmt = db.prepare(`SELECT id FROM notices WHERE id = ?`);
 
 function upsertNotice(notice) {
   const now = Date.now();
   const existing = findByIdStmt.get(notice.id);
   if (existing) return { isNew: false };
-
   insertNoticeStmt.run(
-    notice.id,
-    notice.site_id,
-    notice.region,
-    notice.org || null,
-    notice.title,
-    notice.url,
-    notice.posted_date || null,
-    notice.deadline || null,
-    notice.raw_text || null,
-    notice.summary || null,
-    now,
-    now
+    notice.id, notice.site_id, notice.region, notice.org || null,
+    notice.title, notice.url, notice.posted_date || null, notice.deadline || null,
+    notice.raw_text || null, notice.summary || null, now, now
   );
   return { isNew: true };
 }
 
-// 공고 조회 (필터링 가능)
 function getNotices({ region, search, limit = 100, offset = 0 } = {}) {
   let sql = `SELECT * FROM notices WHERE 1=1`;
   const params = [];
-
-  if (region && region !== '전체') {
-    sql += ` AND region = ?`;
-    params.push(region);
-  }
-
-  if (search) {
-    sql += ` AND (title LIKE ? OR org LIKE ?)`;
-    params.push(`%${search}%`, `%${search}%`);
-  }
-
+  if (region && region !== '전체') { sql += ` AND region = ?`; params.push(region); }
+  if (search) { sql += ` AND (title LIKE ? OR org LIKE ?)`; params.push(`%${search}%`, `%${search}%`); }
   sql += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`;
   params.push(limit, offset);
-
   return db.prepare(sql).all(...params);
 }
 
@@ -110,7 +99,6 @@ function markAsRead(id) {
   db.prepare(`UPDATE notices SET is_new = 0 WHERE id = ?`).run(id);
 }
 
-// 크롤 로그
 function logCrawlStart(site_id) {
   const result = db.prepare(`INSERT INTO crawl_log (site_id, started_at, status) VALUES (?, ?, 'running')`)
     .run(site_id, Date.now());
@@ -119,24 +107,18 @@ function logCrawlStart(site_id) {
 
 function logCrawlEnd(log_id, { status, found_count, new_count, error }) {
   db.prepare(`
-    UPDATE crawl_log
-    SET finished_at = ?, status = ?, found_count = ?, new_count = ?, error = ?
+    UPDATE crawl_log SET finished_at = ?, status = ?, found_count = ?, new_count = ?, error = ?
     WHERE id = ?
   `).run(Date.now(), status, found_count || 0, new_count || 0, error || null, log_id);
 }
 
 function getCrawlStats() {
   return db.prepare(`
-    SELECT site_id,
-           MAX(started_at) as last_run,
-           SUM(new_count) as total_new
-    FROM crawl_log
-    WHERE status = 'success'
-    GROUP BY site_id
+    SELECT site_id, MAX(started_at) as last_run, SUM(new_count) as total_new
+    FROM crawl_log WHERE status = 'success' GROUP BY site_id
   `).all();
 }
 
-// 푸시 구독 관리
 function addSubscription(sub) {
   db.prepare(`
     INSERT OR REPLACE INTO subscriptions (endpoint, keys_p256dh, keys_auth, regions, created_at)
@@ -152,16 +134,41 @@ function removeSubscription(endpoint) {
   db.prepare(`DELETE FROM subscriptions WHERE endpoint = ?`).run(endpoint);
 }
 
+// ========== 🆕 사용자 사이트 관리 ==========
+
+function addUserSite({ id, region, name, url, type }) {
+  db.prepare(`
+    INSERT OR REPLACE INTO user_sites (id, region, name, url, type, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(id, region, name, url, type || '관공서', Date.now());
+}
+
+function getUserSites() {
+  return db.prepare(`SELECT * FROM user_sites ORDER BY created_at DESC`).all();
+}
+
+function removeUserSite(id) {
+  db.prepare(`DELETE FROM user_sites WHERE id = ?`).run(id);
+}
+
+function updateUserSiteStatus(id, status, error, success) {
+  if (success) {
+    db.prepare(`
+      UPDATE user_sites SET last_status = ?, last_error = NULL, success_count = success_count + 1
+      WHERE id = ?
+    `).run(status, id);
+  } else {
+    db.prepare(`
+      UPDATE user_sites SET last_status = ?, last_error = ?, fail_count = fail_count + 1
+      WHERE id = ?
+    `).run(status, error || null, id);
+  }
+}
+
 module.exports = {
   db,
-  upsertNotice,
-  getNotices,
-  getNewCount,
-  markAsRead,
-  logCrawlStart,
-  logCrawlEnd,
-  getCrawlStats,
-  addSubscription,
-  getSubscriptions,
-  removeSubscription,
+  upsertNotice, getNotices, getNewCount, markAsRead,
+  logCrawlStart, logCrawlEnd, getCrawlStats,
+  addSubscription, getSubscriptions, removeSubscription,
+  addUserSite, getUserSites, removeUserSite, updateUserSiteStatus,
 };
