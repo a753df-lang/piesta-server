@@ -1,10 +1,13 @@
-// crawler.js - 푸드트럭 공고 크롤링 (v2 - 개별 공고 URL 추출 강화)
+// crawler.js v3 - 개별 공고 URL 추출 + 사용자 사이트 자동 감지
 const axios = require('axios');
 const cheerio = require('cheerio');
 const iconv = require('iconv-lite');
 const crypto = require('crypto');
 const { SITES, KEYWORDS } = require('./sites.config');
-const { upsertNotice, logCrawlStart, logCrawlEnd } = require('./db');
+const {
+  upsertNotice, logCrawlStart, logCrawlEnd,
+  getUserSites, updateUserSiteStatus,
+} = require('./db');
 
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const TIMEOUT = 15000;
@@ -46,12 +49,8 @@ function toAbsoluteUrl(linkBase, href) {
   if (href.startsWith('http://') || href.startsWith('https://')) return href;
   if (href.startsWith('//')) return 'https:' + href;
   if (href.startsWith('/')) {
-    try {
-      const url = new URL(linkBase);
-      return url.origin + href;
-    } catch {
-      return linkBase + href;
-    }
+    try { const u = new URL(linkBase); return u.origin + href; }
+    catch { return linkBase + href; }
   }
   if (!linkBase.endsWith('/')) linkBase = linkBase + '/';
   return linkBase + href;
@@ -71,30 +70,22 @@ function parseDate(text) {
   return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
 }
 
-// 🆕 개별 공고 URL 추출 - 한국 시청 게시판의 다양한 패턴 지원
 function extractNoticeUrl(titleEl, $row, linkBase, listUrl) {
-  // 패턴 1: 일반 a 태그 href
   let href = titleEl.attr('href') || '';
   if (href && href !== '#' && !href.startsWith('javascript:')) {
     return toAbsoluteUrl(linkBase, href);
   }
 
-  // 패턴 2: onclick 속성에서 id 추출
   const onclick = titleEl.attr('onclick') || titleEl.parent().attr('onclick') || $row.attr('onclick') || '';
   if (onclick) {
-    // location.href='/board/view.do?id=123' 패턴
     const hrefMatch = onclick.match(/location\.href\s*=\s*['"]([^'"]+)['"]/);
-    if (hrefMatch) {
-      return toAbsoluteUrl(linkBase, hrefMatch[1]);
-    }
+    if (hrefMatch) return toAbsoluteUrl(linkBase, hrefMatch[1]);
 
-    // goView(123) / fnView(123) / view(123) / moveView(123) 패턴
     const idMatch = onclick.match(/(?:goView|fnView|view|moveView|boardView|fn_egov_select|doView)\s*\(\s*['"]?(\d+)['"]?/i);
     if (idMatch) {
       const noticeId = idMatch[1];
       const sep = listUrl.includes('?') ? '&' : '?';
 
-      // 사이트별 특수 URL 패턴
       if (linkBase.includes('iksan.go.kr')) {
         return `${linkBase}/index.iksan?menuCd=DOM_000002003009003000&boardId=BBS_0000019&dataSid=${noticeId}`;
       }
@@ -104,25 +95,19 @@ function extractNoticeUrl(titleEl, $row, linkBase, listUrl) {
       if (linkBase.includes('jeonbuk.go.kr')) {
         return `${linkBase}/board/view.jeonbuk?boardId=BBS_0000005&menuCd=DOM_000000110002000000&dataSid=${noticeId}`;
       }
-
-      // 일반 패턴: listUrl의 'list'를 'view'로 바꾸기
       if (listUrl.includes('/list')) {
         return listUrl.replace('/list', '/view') + sep + 'dataSid=' + noticeId;
       }
-
-      // 그 외: id 파라미터만 추가
       return listUrl + sep + 'dataSid=' + noticeId;
     }
   }
 
-  // 패턴 3: data-* 속성
   const dataId = titleEl.attr('data-id') || titleEl.attr('data-no') || titleEl.attr('data-seq') || titleEl.attr('data-sid');
   if (dataId) {
     const sep = listUrl.includes('?') ? '&' : '?';
     return listUrl + sep + 'dataSid=' + dataId;
   }
 
-  // 추출 실패 → 게시판 목록 URL (시청 메인보다는 나음)
   return listUrl;
 }
 
@@ -141,9 +126,7 @@ async function crawlGenericBoard(site) {
     if (!title) return;
     if (!isFoodTruckRelated(title)) return;
 
-    // 🆕 개선된 URL 추출
     const url = extractNoticeUrl(titleEl, $row, site.linkBase, site.listUrl);
-
     const dateText = $row.find(site.dateSelector).first().text().trim();
     const postedDate = parseDate(dateText);
 
@@ -162,13 +145,87 @@ async function crawlGenericBoard(site) {
   return items;
 }
 
-async function crawlSite(site) {
+// ========== 🆕 사용자 사이트 자동 크롤링 ==========
+
+// 일반적인 한국 시청 게시판 selector 조합 (가능성 높은 순)
+const AUTO_SELECTOR_PATTERNS = [
+  { row: 'table.board_list tbody tr, .board_list tbody tr', title: 'td.subject a, td.title a, td a', date: 'td.date, td:last-child' },
+  { row: 'table.bbs_list tbody tr, .bbs_list tbody tr', title: 'td.subject a, td a', date: 'td.date' },
+  { row: 'table tbody tr', title: 'td.title a, td.subject a, td a', date: 'td:nth-last-child(2), td.date' },
+  { row: '.board ul li, .notice_list li, .bbs_list li', title: 'a.subject, a.title, a', date: '.date, .day' },
+  { row: 'tr.list_tr, tr.notice', title: 'a', date: '.date' },
+  { row: 'tbody > tr', title: 'a[href*="view"], a[onclick*="view"], a', date: 'td' },
+];
+
+// 사용자 사이트 자동 크롤링 (여러 selector 시도)
+async function crawlUserSite(userSite) {
+  const html = await fetchHtml(userSite.url, 'utf-8');
+  const $ = cheerio.load(html);
+
+  // URL에서 base 추출
+  let linkBase;
+  try {
+    const u = new URL(userSite.url);
+    linkBase = u.origin;
+  } catch {
+    linkBase = userSite.url;
+  }
+
+  let bestResult = { items: [], pattern: null };
+
+  // 각 selector 패턴 시도
+  for (const pattern of AUTO_SELECTOR_PATTERNS) {
+    const items = [];
+    const rows = $(pattern.row);
+    if (rows.length === 0) continue;
+
+    rows.each((_, row) => {
+      const $row = $(row);
+      const titleEl = $row.find(pattern.title).first();
+      const title = titleEl.text().trim().replace(/\s+/g, ' ');
+
+      if (!title || title.length < 3) return;
+      if (!isFoodTruckRelated(title)) return;
+
+      const url = extractNoticeUrl(titleEl, $row, linkBase, userSite.url);
+      const dateText = $row.find(pattern.date).first().text().trim();
+      const postedDate = parseDate(dateText);
+
+      items.push({
+        id: makeNoticeId(userSite.id, url, title),
+        site_id: userSite.id,
+        region: userSite.region,
+        org: userSite.name,
+        title,
+        url,
+        posted_date: postedDate,
+        raw_text: title,
+      });
+    });
+
+    // 매칭되는 게시글 발견 → 이 패턴이 정답
+    if (items.length > bestResult.items.length) {
+      bestResult = { items, pattern };
+    }
+
+    // 푸드트럭 키워드 매칭된 항목이 1개라도 있으면 이게 정답
+    if (items.length > 0) break;
+  }
+
+  return bestResult.items;
+}
+
+// ========== 크롤 실행 ==========
+
+async function crawlSite(site, isUserSite = false) {
   const logId = logCrawlStart(site.id);
   console.log(`[${new Date().toISOString()}] 🔍 ${site.name} 크롤 시작...`);
 
   try {
     let items = [];
-    if (site.type === 'generic') {
+    if (isUserSite) {
+      items = await crawlUserSite(site);
+    } else if (site.type === 'generic') {
       items = await crawlGenericBoard(site);
     }
 
@@ -179,11 +236,17 @@ async function crawlSite(site) {
     }
 
     logCrawlEnd(logId, { status: 'success', found_count: items.length, new_count: newCount });
+    if (isUserSite) {
+      updateUserSiteStatus(site.id, 'success', null, true);
+    }
     console.log(`  ✅ ${site.name}: 발견 ${items.length}건, 신규 ${newCount}건`);
     return { site: site.name, found: items.length, isNew: newCount, items };
   } catch (err) {
     console.error(`  ❌ ${site.name} 크롤 실패:`, err.message);
     logCrawlEnd(logId, { status: 'error', error: err.message });
+    if (isUserSite) {
+      updateUserSiteStatus(site.id, 'error', err.message, false);
+    }
     return { site: site.name, error: err.message };
   }
 }
@@ -191,10 +254,23 @@ async function crawlSite(site) {
 async function crawlAll() {
   console.log(`\n=== 푸드트럭 공고 크롤링 시작 (${new Date().toLocaleString('ko-KR')}) ===\n`);
   const results = [];
+
+  // 기본 사이트 크롤링
   for (const site of SITES) {
-    const result = await crawlSite(site);
+    const result = await crawlSite(site, false);
     results.push(result);
     await new Promise(r => setTimeout(r, 1500));
+  }
+
+  // 🆕 사용자 등록 사이트 크롤링
+  const userSites = getUserSites();
+  if (userSites.length > 0) {
+    console.log(`\n--- 사용자 등록 사이트 (${userSites.length}개) ---\n`);
+    for (const userSite of userSites) {
+      const result = await crawlSite(userSite, true);
+      results.push(result);
+      await new Promise(r => setTimeout(r, 1500));
+    }
   }
 
   const totalNew = results.reduce((sum, r) => sum + (r.isNew || 0), 0);
@@ -205,7 +281,7 @@ async function crawlAll() {
   return { results, totalNew, totalFound };
 }
 
-module.exports = { crawlSite, crawlAll };
+module.exports = { crawlSite, crawlAll, crawlUserSite };
 
 if (require.main === module) {
   crawlAll().then(() => process.exit(0)).catch(err => {
