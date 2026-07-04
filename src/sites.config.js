@@ -31,7 +31,7 @@ const SITES = [
     linkBase: 'https://www.jeonbuk.go.kr',
   },
 
-// ========== 논산시 ==========
+  // ========== 논산시 ==========
   {
     id: 'nonsan-notice',
     region: '논산',
@@ -44,21 +44,56 @@ const SITES = [
     dateSelector: 'td.date, td:nth-child(4), td:nth-child(5)',
     linkBase: 'https://www.nonsan.go.kr',
   },
-{
-  id: 'nonsan-cntf',
-  region: '논산',
-  name: '논산문화관광재단',
-  listUrl: 'https://www.nonsan.go.kr/cntf/html/sub05/0501.html',
-  type: 'generic',
-  encoding: 'utf-8',
-  rowSelector: '.bd_list_wrap tbody tr',
-  titleSelector: 'td.title a',
-  dateSelector: 'td.reg_date',
-  linkBase: 'https://www.nonsan.go.kr/cntf/html/sub05/0501.html',
-},
-  
+  {
+    id: 'nonsan-cntf',
+    region: '논산',
+    name: '논산문화관광재단(공지사항)',
+    listUrl: 'https://www.nonsan.go.kr/cntf/html/sub05/0501.html',
+    type: 'generic',
+    encoding: 'utf-8',
+    rowSelector: '.bd_list_wrap tbody tr',
+    titleSelector: 'td.title a',
+    dateSelector: 'td.reg_date',
+    linkBase: 'https://www.nonsan.go.kr/cntf/html/sub05/0501.html',
+  },
+  {
+    id: 'nonsan-cntf-support',
+    region: '논산',
+    name: '논산문화관광재단(지원사업공모)',
+    listUrl: 'https://www.nonsan.go.kr/cntf/html/sub05/0502.html',
+    type: 'generic',
+    encoding: 'utf-8',
+    rowSelector: '.bd_list_wrap tbody tr',
+    titleSelector: 'td.title a',
+    dateSelector: 'td.reg_date',
+    linkBase: 'https://www.nonsan.go.kr/cntf/html/sub05/0502.html',
+  },
+  {
+    id: 'nonsan-cntf-bid',
+    region: '논산',
+    name: '논산문화관광재단(입찰공고)',
+    listUrl: 'https://www.nonsan.go.kr/cntf/html/sub05/0503.html',
+    type: 'generic',
+    encoding: 'utf-8',
+    rowSelector: '.bd_list_wrap tbody tr',
+    titleSelector: 'td.title a',
+    dateSelector: 'td.reg_date',
+    linkBase: 'https://www.nonsan.go.kr/cntf/html/sub05/0503.html',
+  },
+  {
+    id: 'nonsan-cntf-press',
+    region: '논산',
+    name: '논산문화관광재단(보도자료)',
+    listUrl: 'https://www.nonsan.go.kr/cntf/html/sub05/0505.html',
+    type: 'generic',
+    encoding: 'utf-8',
+    rowSelector: '.bd_list_wrap tbody tr',
+    titleSelector: 'td.title a',
+    dateSelector: 'td.reg_date',
+    linkBase: 'https://www.nonsan.go.kr/cntf/html/sub05/0505.html',
+  },
+
   // ========== 부여군 (URL 수정됨) ==========
-  
   {
     id: 'buyeo-notice',
     region: '부여',
@@ -84,34 +119,6 @@ const SITES = [
     titleSelector: 'td a, td.title a',
     dateSelector: 'td.date, td:nth-child(4)',
     linkBase: 'https://www.gongju.go.kr',
-  },
-
-  // ========== 서천군 (신규 추가) ==========
-  {
-    id: 'seocheon-notice',
-    region: '서천',
-    name: '서천군청 공지사항',
-    listUrl: 'https://www.seocheon.go.kr/kor.do',
-    type: 'generic',
-    encoding: 'utf-8',
-    rowSelector: 'table tbody tr',
-    titleSelector: 'td a, td.title a',
-    dateSelector: 'td.date, td:nth-child(4)',
-    linkBase: 'https://www.seocheon.go.kr',
-  },
-
-  // ========== 보령시 (신규 추가) ==========
-  {
-    id: 'boryeong-notice',
-    region: '보령',
-    name: '보령시청 공지사항',
-    listUrl: 'https://www.brcn.go.kr/kor.do',
-    type: 'generic',
-    encoding: 'utf-8',
-    rowSelector: 'table tbody tr',
-    titleSelector: 'td a, td.title a',
-    dateSelector: 'td.date, td:nth-child(4)',
-    linkBase: 'https://www.brcn.go.kr',
   },
 
   // ========== 청양군 (URL 수정됨) ==========
@@ -141,19 +148,6 @@ const SITES = [
     dateSelector: 'td.date, td:nth-child(4)',
     linkBase: 'https://www.iksan.go.kr',
   },
-  {
-    id: 'iksan-ctf',
-    region: '익산',
-    name: '익산문화관광재단',
-    listUrl: 'https://www.ictf.or.kr/',
-    type: 'generic',
-    encoding: 'utf-8',
-    rowSelector: 'table tbody tr, .board_list tr, .notice_list li',
-    titleSelector: 'a',
-    dateSelector: '.date, td.date',
-    linkBase: 'https://www.ictf.or.kr',
-  },
-
   // ========== 군산시 (신규 추가) ==========
   {
     id: 'gunsan-notice',
@@ -168,59 +162,6 @@ const SITES = [
     linkBase: 'https://www.gunsan.go.kr',
   },
 
-  // ========== 김제시 (신규 추가) ==========
-  {
-    id: 'gimje-notice',
-    region: '김제',
-    name: '김제시청 공지사항',
-    listUrl: 'https://www.gimje.go.kr/',
-    type: 'generic',
-    encoding: 'utf-8',
-    rowSelector: 'table tbody tr',
-    titleSelector: 'td a, td.title a',
-    dateSelector: 'td.date, td:nth-child(4)',
-    linkBase: 'https://www.gimje.go.kr',
-  },
-
-  // ========== 전주시 (신규 추가) ==========
-  {
-    id: 'jeonju-notice',
-    region: '전주',
-    name: '전주시청 공지사항',
-    listUrl: 'https://www.jeonju.go.kr/',
-    type: 'generic',
-    encoding: 'utf-8',
-    rowSelector: 'table tbody tr',
-    titleSelector: 'td a, td.title a',
-    dateSelector: 'td.date, td:nth-child(4)',
-    linkBase: 'https://www.jeonju.go.kr',
-  },
-  {
-    id: 'jeonju-cf',
-    region: '전주',
-    name: '전주문화재단',
-    listUrl: 'https://www.jjcf.or.kr/',
-    type: 'generic',
-    encoding: 'utf-8',
-    rowSelector: 'table tbody tr, .board_list tr',
-    titleSelector: 'a',
-    dateSelector: '.date, td.date',
-    linkBase: 'https://www.jjcf.or.kr',
-  },
-
-  // ========== 완주군 (신규 추가) ==========
-  {
-    id: 'wanju-notice',
-    region: '완주',
-    name: '완주군청 공지사항',
-    listUrl: 'https://www.wanju.go.kr/',
-    type: 'generic',
-    encoding: 'utf-8',
-    rowSelector: 'table tbody tr',
-    titleSelector: 'td a, td.title a',
-    dateSelector: 'td.date, td:nth-child(4)',
-    linkBase: 'https://www.wanju.go.kr',
-  },
 ];
 
 module.exports = { SITES, KEYWORDS };
