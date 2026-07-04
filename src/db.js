@@ -99,6 +99,11 @@ function markAsRead(id) {
   db.prepare(`UPDATE notices SET is_new = 0 WHERE id = ?`).run(id);
 }
 
+function deleteNotice(id) {
+  const result = db.prepare(`DELETE FROM notices WHERE id = ?`).run(id);
+  return result.changes > 0;
+}
+
 function logCrawlStart(site_id) {
   const result = db.prepare(`INSERT INTO crawl_log (site_id, started_at, status) VALUES (?, ?, 'running')`)
     .run(site_id, Date.now());
@@ -167,7 +172,7 @@ function updateUserSiteStatus(id, status, error, success) {
 
 module.exports = {
   db,
-  upsertNotice, getNotices, getNewCount, markAsRead,
+  upsertNotice, getNotices, getNewCount, markAsRead, deleteNotice,
   logCrawlStart, logCrawlEnd, getCrawlStats,
   addSubscription, getSubscriptions, removeSubscription,
   addUserSite, getUserSites, removeUserSite, updateUserSiteStatus,
