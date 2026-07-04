@@ -10,7 +10,7 @@ const { crawlAll, crawlSite, crawlUserSite } = require('./crawler');
 const { notifyNewNotices, pushEnabled, VAPID_PUBLIC } = require('./notifier');
 const {
   getNotices, getCrawlStats,
-  addSubscription, removeSubscription, markAsRead,
+  addSubscription, removeSubscription, markAsRead, deleteNotice,
   addUserSite, getUserSites, removeUserSite, updateUserSiteStatus,
   db,
 } = require('./db');
@@ -41,6 +41,16 @@ app.get('/api/notices', (req, res) => {
 app.post('/api/notices/:id/read', (req, res) => {
   try {
     markAsRead(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.delete('/api/notices/:id', (req, res) => {
+  try {
+    const deleted = deleteNotice(req.params.id);
+    if (!deleted) return res.status(404).json({ ok: false, error: 'notice not found' });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
