@@ -45,17 +45,18 @@ const SITES = [
     linkBase: 'https://www.nonsan.go.kr',
   },
   {
-    id: 'nonsan-cntf',
-    region: '논산',
-    name: '논산문화관광재단',
-    listUrl: 'https://www.nonsan.go.kr/cntf/',
-    type: 'generic',
-    encoding: 'utf-8',
-    rowSelector: 'table tbody tr, .board_list tr, .board tbody tr, .notice_list li',
-    titleSelector: 'td a, .title a, a.subject, a',
-    dateSelector: 'td.date, td:nth-child(4), td:nth-child(5), .date',
-    linkBase: 'https://www.nonsan.go.kr',
-  },
+  id: 'nonsan-cntf',
+  region: '논산',
+  name: '논산문화관광재단',
+  listUrl: 'https://www.nonsan.go.kr/cntf/html/sub05/0504.html',
+  type: 'generic',
+  encoding: 'utf-8',
+  rowSelector: '.bd_list_wrap tbody tr',
+  titleSelector: 'td.title a',
+  dateSelector: 'td.reg_date',
+  linkBase: 'https://www.nonsan.go.kr/cntf/html/sub05/0504.html',
+},
+  
   // ========== 부여군 (URL 수정됨) ==========
   
   {
