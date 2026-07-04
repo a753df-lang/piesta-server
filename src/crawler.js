@@ -52,6 +52,10 @@ function toAbsoluteUrl(linkBase, href) {
     try { const u = new URL(linkBase); return u.origin + href; }
     catch { return linkBase + href; }
   }
+  if (href.startsWith('?')) {
+    const base = linkBase.split('?')[0];
+    return base + href;
+  }
   if (!linkBase.endsWith('/')) linkBase = linkBase + '/';
   return linkBase + href;
 }
