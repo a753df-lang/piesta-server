@@ -31,20 +31,33 @@ const SITES = [
     linkBase: 'https://www.jeonbuk.go.kr',
   },
 
-  // ========== 논산시 ==========
-{
-  id: 'nonsan-cntf',
-  region: '논산',
-  name: '논산문화관광재단',
-  listUrl: 'https://www.nonsan.go.kr/cntf/',
-  type: 'generic',
-  encoding: 'utf-8',
-  rowSelector: 'table tbody tr, .board_list tr, .board tbody tr, .notice_list li',
-  titleSelector: 'td a, .title a, a.subject, a',
-  dateSelector: 'td.date, td:nth-child(4), td:nth-child(5), .date',
-  linkBase: 'https://www.nonsan.go.kr',
-}
+// ========== 논산시 ==========
+  {
+    id: 'nonsan-notice',
+    region: '논산',
+    name: '논산시청 공지사항',
+    listUrl: 'https://www.nonsan.go.kr/kor/html/sub03/030101.html',
+    type: 'generic',
+    encoding: 'utf-8',
+    rowSelector: 'table tbody tr, .board_list tr',
+    titleSelector: 'td a, .title a',
+    dateSelector: 'td.date, td:nth-child(4), td:nth-child(5)',
+    linkBase: 'https://www.nonsan.go.kr',
+  },
+  {
+    id: 'nonsan-cntf',
+    region: '논산',
+    name: '논산문화관광재단',
+    listUrl: 'https://www.nonsan.go.kr/cntf/',
+    type: 'generic',
+    encoding: 'utf-8',
+    rowSelector: 'table tbody tr, .board_list tr, .board tbody tr, .notice_list li',
+    titleSelector: 'td a, .title a, a.subject, a',
+    dateSelector: 'td.date, td:nth-child(4), td:nth-child(5), .date',
+    linkBase: 'https://www.nonsan.go.kr',
+  },
   // ========== 부여군 (URL 수정됨) ==========
+  
   {
     id: 'buyeo-notice',
     region: '부여',
