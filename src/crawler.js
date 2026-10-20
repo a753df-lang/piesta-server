@@ -64,6 +64,11 @@ function ensureRegion(name) {
   let row = getRegion(name);
   if (row) return row;
   const info = findRegion(name);
+  // 같은 지자체가 다른 이름으로 이미 있으면 (예: '논산' 과 '논산시') 새로 만들지 않고 기존 것을 사용
+  if (info) {
+    const same = getRegions().find(r => r.domain === info.domain);
+    if (same) return same;
+  }
   addRegion({ name, full_name: info ? info.name : null, domain: info ? info.domain : null });
   if (!info) setRegionStatus(name, 'unknown', '전국 지자체 목록에 없는 이름입니다. 사이트를 직접 추가해 주세요.');
   return getRegion(name);

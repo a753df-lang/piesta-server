@@ -107,7 +107,11 @@ app.post('/api/regions', async (req, res) => {
     const name = String((req.body && req.body.name) || '').trim();
     if (!name) return fail(res, new Error('지역 이름이 필요합니다'), 400);
     if (!getRegion(name) && getRegions().length >= MAX_REGIONS) return fail(res, new Error('등록 가능한 지역 수를 초과했습니다'), 400);
-    ensureRegion(name);
+    const row = ensureRegion(name);
+    if (row.name !== name) {
+      // 이미 같은 지자체가 등록돼 있음 → 그 지역 정보를 그대로 돌려줌
+      return ok(res, { region: { ...regionView(row), name, sameAs: row.name }, log: [] });
+    }
     const result = await discoverAndSave(name);
     runInBackground('지역 추가'); // 새 지역 바로 크롤
     ok(res, { region: regionView(getRegion(name)), log: result.log });

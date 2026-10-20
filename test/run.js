@@ -61,6 +61,26 @@ test('공지사항 범용 스캐너: 조회수를 날짜로 읽지 않음', () =
   assert.strictEqual(flea.date, '2026-10-16');
 });
 
+test('카드형 목록(김제): 제목만 꺼내고 작성일 라벨 날짜 사용', () => {
+  const { rows, items } = scanBoard(fx('gimje-notice.html'), 'https://www.gimje.go.kr/board/list.gimje?boardId=BBS_0000027');
+  assert.strictEqual(rows, 3);
+  assert.strictEqual(items[0].title, '김제시 공공하수처리시설 방류수 수질농도 공개(26.10.12. ~ 26.10.18.)');
+  assert.strictEqual(items[0].date, '2026-10-20'); // 요약 속 2026.10.12 가 아니라 작성일
+  const ft = items.find(i => i.title.includes('푸드트럭'));
+  assert.strictEqual(ft.title, '지평선축제 푸드트럭 참가자 모집');
+  assert.strictEqual(ft.date, '2026-10-19');
+  assert.strictEqual(ft.url, 'https://www.gimje.go.kr/board/view.gimje?boardId=BBS_0000027&dataSid=1002');
+});
+
+test('카드형 목록(백제문화재단): 날짜가 안쪽 ul/li 에 있어도 글로 인식', () => {
+  const { rows, items } = scanBoard(fx('baekjecf-notice.html'), 'https://www.baekjecf.or.kr/community/01.php');
+  assert.strictEqual(rows, 3);
+  const ft = items.find(i => i.title.includes('푸드트럭'));
+  assert.strictEqual(ft.title, '제72회 백제문화제 푸드트럭 운영자 모집');
+  assert.strictEqual(ft.date, '2026-09-29');
+  assert.strictEqual(ft.url, 'https://www.baekjecf.or.kr/community/01.php?admin_mode=read&no=10500&page=1');
+});
+
 test('새올 고시공고 파서: 상세 링크 생성', () => {
   const { rows, items } = parseEminwon(fx('eminwon-nonsan.html'), 'https://eminwon.nonsan21.net');
   assert.strictEqual(rows, 4);
@@ -188,6 +208,15 @@ test('한 달 지난 공고 판별', () => {
   assert.ok(isRecent({ date: null }));
   assert.ok(isRecent({ date: day(1) }));
   process.env.MAX_AGE_DAYS = saved;
+});
+
+test('같은 지자체를 다른 이름으로 추가해도 중복 생성 안 함', () => {
+  const { ensureRegion } = require('../src/crawler');
+  const { getRegions } = require('../src/db');
+  const before = getRegions().length;
+  const r = ensureRegion('논산시');
+  assert.strictEqual(r.name, '논산');
+  assert.strictEqual(getRegions().length, before);
 });
 
 test.after(() => { try { fs.unlinkSync(process.env.DB_PATH); } catch {} });

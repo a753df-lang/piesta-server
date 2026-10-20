@@ -162,6 +162,20 @@ function resolveLink($, a, $row, pageUrl, linkFns = {}) {
 }
 
 const NOISE_TEXT = /^(첨부|첨부파일|다운로드|미리보기|바로보기|새글|new|n|more|더보기|\d+)$/i;
+// 카드형 목록에서 링크 안의 제목 요소
+const TITLE_IN_LINK = 'strong, h3, h4, h5, .tit, .title, .subject, .sbj, .txt_t, .t_tit, .bbs_tit, dt';
+// '작성일 : 2026.10.20' 처럼 라벨이 붙은 날짜를 먼저 찾음 (본문 요약 속 다른 날짜보다 우선)
+const LABELED_DATE_RE = /(작성일|등록일|게시일|작성일자|등록일자|날짜|일자)\s*[:：]?\s*((20\d{2}|\d{2})\s*[.\-\/년]\s*\d{1,2}\s*[.\-\/월]\s*\d{1,2})/;
+
+// 링크 안에서 제목만 꺼내기 (아이콘·'첨부파일 있음' 같은 표시 제거)
+function titleFromLink($, a) {
+  const $a = $(a);
+  const $h = $a.find(TITLE_IN_LINK).first();
+  const $t = ($h.length ? $h : $a).clone();
+  $t.find('i, img, .ico_file, .ico, .blind, .sr-only, .hidden, .file, .date, .info, .txt, .num').remove();
+  const text = $h.length ? $t.text() : $t.text();
+  return cleanTitle(text.replace(/첨부\s*파일\s*(있음|없음)?/g, ' '));
+}
 
 function cleanTitle(s) {
   return String(s || '')
@@ -185,10 +199,11 @@ function scanBoard(html, pageUrl) {
 
   $('tr, li, dl, .item, .list_item').each((_, el) => {
     const $row = $(el);
-    // 안쪽에 또 다른 줄 단위가 있으면 바깥쪽은 건너뜀 (가장 안쪽 줄만 사용)
-    if ($row.find('tr, li').length > 0) return;
+    // 안쪽에 '링크가 있는' 줄이 또 있으면 바깥쪽은 건너뜀 (가장 안쪽 글 단위만 사용)
+    // (날짜·작성자를 <ul><li> 로 감싼 카드형 목록은 안쪽 li 에 링크가 없으므로 바깥 li 를 글로 인식)
+    if ($row.find('tr, li').filter((_, x) => $(x).find('a').length > 0).length > 0) return;
     const rowText = $row.text().replace(/\s+/g, ' ').trim();
-    if (rowText.length < 6 || rowText.length > 600) return;
+    if (rowText.length < 6 || rowText.length > 1500) return;
 
     const anchors = $row.find('a').toArray();
     if (anchors.length === 0) return;
@@ -196,12 +211,14 @@ function scanBoard(html, pageUrl) {
     // 제목 링크: 가장 긴 텍스트를 가진 링크
     let best = null, bestText = '';
     for (const a of anchors) {
-      const t = cleanTitle($(a).attr('title') && $(a).text().trim().length < 4 ? $(a).attr('title') : $(a).text());
+      const raw = $(a).text().trim();
+      const t = raw.length < 4 && $(a).attr('title') ? cleanTitle($(a).attr('title')) : titleFromLink($, a);
       if (t.length > bestText.length && !NOISE_TEXT.test(t)) { best = a; bestText = t; }
     }
     if (!best || bestText.length < 4) return;
 
-    const date = parseDate(rowText.replace(bestText, ' '));
+    const labeled = rowText.match(LABELED_DATE_RE);
+    const date = labeled ? parseDate(labeled[2]) : parseDate(rowText.replace(bestText, ' '));
     if (!date) return; // 날짜 없는 줄은 메뉴/배너일 가능성이 높음
 
     rows++;
