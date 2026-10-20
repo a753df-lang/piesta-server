@@ -275,16 +275,32 @@ app.get('/api/health', (req, res) => {
 });
 
 // ========== 스케줄러 ==========
-
-const CRON_SCHEDULE = process.env.CRAWL_CRON || '0 * * * *';
+// 매일 정해진 시각(한국시간)에만 수집. 기본: 오전 10시, 오후 2시, 오후 5시
+// 무료 서버는 잠들어 있으면 예약이 안 돌기 때문에, 깃허브 Actions(.github/workflows/crawl-schedule.yml)가
+// 같은 시각에 /api/crawl 을 호출해서 서버를 깨움. 놓친 시각이 있으면 깨어나자마자 수집.
+const CRAWL_HOURS = (process.env.CRAWL_HOURS || '10,14,17')
+  .split(',').map(h => parseInt(h, 10)).filter(h => h >= 0 && h < 24).sort((a, b) => a - b);
+const CRON_SCHEDULE = process.env.CRAWL_CRON || `0 ${CRAWL_HOURS.join(',')} * * *`;
 cron.schedule(CRON_SCHEDULE, () => runInBackground('스케줄'), { timezone: 'Asia/Seoul' });
 console.log(`⏰ 스케줄러 등록됨: ${CRON_SCHEDULE} (Asia/Seoul)`);
 
-// 서버가 잠들었다 깨어나 정각 스케줄을 놓친 경우 보정: 마지막 크롤이 90분 넘었으면 실행
-setInterval(() => {
+// 가장 최근의 수집 예정 시각 (ms). 한국시간 기준
+const KST = 9 * 3600000;
+function latestSlot(now = Date.now()) {
+  const k = new Date(now + KST);
+  const dayStart = Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate()) - KST;
+  const hour = k.getUTCHours();
+  const todays = CRAWL_HOURS.filter(h => h <= hour);
+  if (todays.length) return dayStart + todays[todays.length - 1] * 3600000;
+  return dayStart - 86400000 + CRAWL_HOURS[CRAWL_HOURS.length - 1] * 3600000; // 어제 마지막 시각
+}
+
+// 놓친 수집 보정: 마지막 수집이 가장 최근 예정 시각보다 이전이면 실행
+function catchUp(label) {
   const last = Number(getMeta('last_crawl') || 0);
-  if (Date.now() - last > 90 * 60000) runInBackground('지연 보정');
-}, 10 * 60000).unref();
+  if (last < latestSlot()) runInBackground(label);
+}
+setInterval(() => catchUp('놓친 수집 보정'), 10 * 60000).unref();
 
 // ========== 서버 시작 ==========
 
@@ -293,10 +309,11 @@ app.listen(PORT, () => {
   console.log(`   URL: http://localhost:${PORT}`);
   console.log(`   상태 페이지: http://localhost:${PORT}/status\n`);
 
-  // DB가 비어 있으면(재배포·재시작 직후) 바로 크롤
-  if (process.env.CRAWL_ON_START === 'true' || !getMeta('last_crawl')) {
-    setTimeout(() => runInBackground('시작'), 5000);
-  }
+  // 재배포·재시작 직후: 서버 DB가 비어 있으면 바로 수집, 아니면 놓친 시각만 보정
+  setTimeout(() => {
+    if (process.env.CRAWL_ON_START === 'true' || !getMeta('last_crawl')) runInBackground('시작');
+    else catchUp('시작 보정');
+  }, 5000);
 });
 
 process.on('SIGTERM', () => {

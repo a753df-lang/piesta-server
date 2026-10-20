@@ -1,0 +1,23 @@
+# 무료 Render 서버는 잠들어 있으면 예약 수집이 안 돌기 때문에
+# 매일 정해진 시각(한국시간 10시, 14시, 17시)에 서버를 깨우고 수집을 시작시킴
+name: Crawl schedule (서버 깨우기)
+
+on:
+  schedule:
+    # 깃허브는 UTC 기준: 한국시간 10시 = 01시, 14시 = 05시, 17시 = 08시
+    - cron: '0 1,5,8 * * *'
+  workflow_dispatch:
+
+jobs:
+  wake-and-crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Wake server and start crawl
+        run: |
+          URL="https://piesta-server.onrender.com"
+          for i in 1 2 3 4 5; do
+            if curl -fsS --max-time 90 "$URL/api/health"; then echo; break; fi
+            echo "서버 깨우는 중... ($i)"; sleep 20
+          done
+          curl -fsS --max-time 60 -X POST "$URL/api/crawl?async=1" && echo " 수집 시작됨"
