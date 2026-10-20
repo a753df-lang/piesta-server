@@ -211,7 +211,11 @@ function findMainRedirect(html, pageUrl, domain) {
 // 홈페이지(메인) 주소는 최신글 목록이 섞여 있어 게시판으로 착각하기 쉬움 → 게시판 후보에서 제외
 function isHomeLike(url) {
   try {
-    const p = new URL(url).pathname.replace(/\/+$/, '').toLowerCase();
+    const u = new URL(url);
+    // index.gimje?menuCd=... 처럼 뒤에 메뉴·게시판 값이 붙은 주소는 홈이 아니라 실제 메뉴 페이지
+    const params = [...u.searchParams.keys()].filter(k => !/^(lang|locale|site|siteid|site_dvs_cd)$/i.test(k));
+    if (params.length > 0) return false;
+    const p = u.pathname.replace(/\/+$/, '').toLowerCase();
     return p === '' || /^\/(index|main|kor|kr|ko|home|intro)(\.\w+)?$/.test(p) || /\/(main|index)\/view$/.test(p)
       || /^\/(kor|kr|ko|html\/kr|html\/kor)\/(index|main)(\.\w+)?$/.test(p) || /^\/(html\/)?(kr|kor)$/.test(p);
   } catch { return false; }

@@ -192,6 +192,21 @@ test('홈페이지 주소(kor.do 등)는 게시판으로 인정하지 않음', a
   assert.ok(r.sources.some(x => x.name === '청양군 공지사항'));
 });
 
+test('메뉴 값이 붙은 index 주소는 홈으로 보지 않음 (김제·전주형)', async () => {
+  const dir = path.join(__dirname, 'fixtures');
+  const home = '<a href="/index.gimje?menuCd=DOM_000000104001000000">공지사항</a><a href="/kor.do">고시공고</a>' + Array.from({ length: 45 }, (_, i) => `<a href="/m${i}.do">메뉴${i}</a>`).join('');
+  fs.writeFileSync(path.join(dir, '_g-home.html'), home);
+  const extra = [
+    [/^https:\/\/www\.gimje\.go\.kr\/$/, '_g-home.html'],
+    [/^https:\/\/www\.gimje\.go\.kr\/index\.gimje\?menuCd=/, 'gimje-notice.html'],
+  ];
+  ROUTES.unshift(...extra);
+  let r;
+  try { r = await discoverRegion('김제'); } finally { ROUTES.splice(0, extra.length); fs.unlinkSync(path.join(dir, '_g-home.html')); }
+  assert.ok(r.sources.some(x => x.name === '김제시 공지사항' && /index\.gimje\?menuCd=/.test(x.url)), JSON.stringify(r.log, null, 1));
+  assert.ok(!r.sources.some(x => /kor\.do$/.test(x.url)));
+});
+
 test('지역 이름 매칭', () => {
   assert.strictEqual(findRegion('논산').name, '논산시');
   assert.strictEqual(findRegion('논산시').domain, 'nonsan.go.kr');
