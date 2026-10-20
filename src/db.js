@@ -148,6 +148,11 @@ function deleteNotice(id) {
   return result.changes > 0;
 }
 
+// 등록일이 기준일보다 오래된 공고 삭제 (등록일 모르는 공고는 유지). 반환: 삭제 건수
+function pruneOldNotices(cutoffDate) {
+  return db.prepare(`DELETE FROM notices WHERE posted_date IS NOT NULL AND posted_date < ?`).run(cutoffDate).changes;
+}
+
 // ========== 크롤 로그 ==========
 function logCrawlStart(site_id) {
   const result = db.prepare(`INSERT INTO crawl_log (site_id, started_at, status) VALUES (?, ?, 'running')`)
@@ -295,7 +300,7 @@ function setMeta(key, value) {
 
 module.exports = {
   db,
-  upsertNotice, getNotices, getNewCount, markAsRead, deleteNotice,
+  upsertNotice, getNotices, getNewCount, markAsRead, deleteNotice, pruneOldNotices,
   logCrawlStart, logCrawlEnd, getCrawlStats, pruneCrawlLog,
   addSubscription, getSubscriptions, removeSubscription,
   addUserSite, getUserSites, removeUserSite, updateUserSiteStatus,

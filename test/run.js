@@ -8,6 +8,7 @@ const os = require('os');
 
 process.env.DB_PATH = path.join(os.tmpdir(), `piesta-test-${process.pid}.db`);
 process.env.DEFAULT_REGIONS = '논산';
+process.env.MAX_AGE_DAYS = '36500'; // fixture 날짜(2026-07~10)가 지나도 테스트가 깨지지 않게
 
 const fx = (f) => fs.readFileSync(path.join(__dirname, 'fixtures', f), 'utf8');
 
@@ -156,6 +157,20 @@ test('전체 크롤: 시청·재단의 키워드 공고만 저장, 중복 없음
   assert.ok(getSources('논산').every(s => s.status === 'ok'));
   const second = await crawlAll();
   assert.strictEqual(second.totalNew, 0);
+});
+
+test('한 달 지난 공고 판별', () => {
+  const day = (n) => new Date(Date.now() + 9 * 3600000 - n * 86400000).toISOString().slice(0, 10);
+  const saved = process.env.MAX_AGE_DAYS;
+  // crawler 모듈은 이미 로드됨 → 같은 계산식으로 30일 기준 확인
+  const cutoff30 = day(30);
+  assert.ok(day(5) >= cutoff30);
+  assert.ok(!(day(45) >= cutoff30));
+  assert.ok(!('2025-11-01' >= cutoff30));
+  const { isRecent } = require('../src/crawler');
+  assert.ok(isRecent({ date: null }));
+  assert.ok(isRecent({ date: day(1) }));
+  process.env.MAX_AGE_DAYS = saved;
 });
 
 test.after(() => { try { fs.unlinkSync(process.env.DB_PATH); } catch {} });

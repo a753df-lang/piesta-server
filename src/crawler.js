@@ -10,7 +10,7 @@ const {
 const { findRegion, shortName, discoverRegion } = require('./discover');
 const naver = require('./naver');
 const {
-  upsertNotice, logCrawlStart, logCrawlEnd, pruneCrawlLog,
+  upsertNotice, logCrawlStart, logCrawlEnd, pruneCrawlLog, pruneOldNotices,
   getUserSites, updateUserSiteStatus,
   getRegion, getRegions, addRegion, setRegionStatus,
   replaceSources, getSources, updateSourceResult,
@@ -23,6 +23,17 @@ const REDISCOVER_AFTER_FAILS = 12;           // 매시간 크롤 기준 약 12�
 const REDISCOVER_INTERVAL = 7 * 86400000;    // 정상이어도 7일마다 재탐색
 const RETRY_FAILED_DISCOVERY = 6 * 3600000;  // 탐색 실패 지역은 6시간 뒤 재시도
 const NAVER_INTERVAL = 3 * 3600000;
+// 등록일이 이보다 오래된 공고는 저장·알림하지 않음 (기본 30일, 환경변수 MAX_AGE_DAYS 로 조정)
+const MAX_AGE_DAYS = parseInt(process.env.MAX_AGE_DAYS || '30', 10);
+
+function cutoffDate() {
+  const d = new Date(Date.now() + 9 * 3600000 - MAX_AGE_DAYS * 86400000); // 한국시간 기준 날짜
+  return d.toISOString().slice(0, 10);
+}
+// 등록일을 모르는 공고는 일단 통과 (날짜 없는 게시판 대비)
+function isRecent(item) {
+  return !item.date || item.date >= cutoffDate();
+}
 
 function makeNoticeId(siteId, url, title) {
   const hash = crypto.createHash('md5').update(url + '|' + title).digest('hex').slice(0, 12);
@@ -117,7 +128,7 @@ async function crawlSource(src) {
       parsed = scanBoard(html, finalUrl);
     }
     const items = parsed.items
-      .filter(it => isFoodTruckRelated(it.title))
+      .filter(it => isFoodTruckRelated(it.title) && isRecent(it))
       .map(it => toNotice(src.id, src.region, src.name, it, fallbackUrl));
     const newCount = saveItems(items);
     updateSourceResult(src.id, { ok: true, rows: parsed.rows, found: items.length });
@@ -143,7 +154,7 @@ async function crawlSite(site, isUserSite = false) {
     const { html, finalUrl } = await fetchPage(url);
     const parsed = scanBoard(html, finalUrl);
     const items = parsed.items
-      .filter(it => isFoodTruckRelated(it.title))
+      .filter(it => isFoodTruckRelated(it.title) && isRecent(it))
       .map(it => toNotice(site.id, site.region, site.name, it, finalUrl));
     const newCount = saveItems(items);
     const ok = parsed.rows > 0;
@@ -176,7 +187,7 @@ async function crawlNaver(regions) {
     const logId = logCrawlStart(`naver:${r.name}`);
     try {
       const found = await naver.searchRegion(short, isFoodTruckRelated);
-      const items = found.map(it => toNotice('naver', r.name, it.source, it, it.url));
+      const items = found.filter(isRecent).map(it => toNotice('naver', r.name, it.source, it, it.url));
       const newCount = saveItems(items);
       logCrawlEnd(logId, { status: 'success', found_count: items.length, new_count: newCount });
       results.push({ site: `네이버:${r.name}`, found: items.length, isNew: newCount });
@@ -227,6 +238,8 @@ async function crawlAll() {
 
     results.push(...await crawlNaver(regions));
     pruneCrawlLog();
+    const removed = pruneOldNotices(cutoffDate());
+    if (removed) console.log(`  🧹 ${MAX_AGE_DAYS}일 지난 공고 ${removed}건 정리`);
 
     const totalNew = results.reduce((s, r) => s + (r.isNew || 0), 0);
     const totalFound = results.reduce((s, r) => s + (r.found || 0), 0);
@@ -239,7 +252,7 @@ async function crawlAll() {
   try { return await running; } finally { running = null; }
 }
 
-module.exports = { crawlSite, crawlAll, crawlUserSite, ensureRegion, discoverAndSave, isFoodTruckRelated };
+module.exports = { crawlSite, crawlAll, crawlUserSite, ensureRegion, discoverAndSave, isFoodTruckRelated, isRecent, cutoffDate };
 
 if (require.main === module) {
   crawlAll().then(() => process.exit(0)).catch(err => {
