@@ -37,6 +37,10 @@ test('날짜 파싱', () => {
   assert.strictEqual(parseDate('1749'), null);
 });
 
+test('주소에서 jsessionid 제거', () => {
+  assert.strictEqual(scanner.safeUrl('/bbs/list.do;jsessionid=ABC123?x=1', 'https://www.seocheon.go.kr/'), 'https://www.seocheon.go.kr/bbs/list.do?x=1');
+});
+
 test('키워드 매칭 (띄어쓰기 무시)', () => {
   const m = makeKeywordMatcher(['푸드트럭', '플리마켓']);
   assert.ok(m('강경젓갈축제 푸드 트럭 모집'));

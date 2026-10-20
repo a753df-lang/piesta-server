@@ -45,7 +45,7 @@ async function fetchPage(url, { retries = 1, timeout = TIMEOUT } = {}) {
       });
       const buf = Buffer.from(res.data);
       const html = decodeBody(buf, res.headers['content-type'] || '');
-      const finalUrl = (res.request && res.request.res && res.request.res.responseUrl) || url;
+      const finalUrl = ((res.request && res.request.res && res.request.res.responseUrl) || url).replace(/;jsessionid=[^?#]*/i, '');
       return { html, finalUrl, status: res.status };
     } catch (err) {
       lastErr = err;
@@ -86,7 +86,10 @@ function makeKeywordMatcher(keywords) {
 
 // ========== 링크 ==========
 function safeUrl(href, base) {
-  try { return new URL(href, base).href; } catch { return null; }
+  try {
+    // ;jsessionid=... 같은 접속 세션 값은 만료되므로 제거
+    return new URL(href, base).href.replace(/;jsessionid=[^?#]*/i, '');
+  } catch { return null; }
 }
 
 // 페이지 스크립트에서 "상세보기 함수"를 찾아 URL 조립 규칙을 뽑아냄
