@@ -99,7 +99,7 @@ test('지난 고시공고(보관 메뉴) 링크는 고르지 않음', async () =
 
 test('홈페이지 패밀리사이트(선택상자)에서 문화재단 찾아 공지·공모 게시판 연결', async () => {
   const dir = path.join(__dirname, 'fixtures');
-  const home = '<select><option value="">패밀리사이트</option><option value="https://www.cacf.or.kr/">천안문화재단</option><option value="https://www.kcaf.or.kr/">한국문화예술위원회</option></select>'
+  const home = '<select><option value="">패밀리사이트</option><option value="https://www.cacf.or.kr/">천안문화재단</option><option value="https://www.kcaf.or.kr/">한국문화예술위원회</option><option value="https://lll.cheonan.go.kr/">천안시평생학습관</option><option value="https://www.cayf.or.kr/">천안시청소년재단</option></select>'
     + Array.from({ length: 45 }, (_, i) => `<a href="/m${i}.do">메뉴${i}</a>`).join('');
   const cf = '<a href="/bbs/notice/list.do">공지사항</a><a href="/bbs/contest/list.do">공모사업</a><a href="https://other.com/">외부</a>';
   fs.writeFileSync(path.join(dir, '_t-home.html'), home);
@@ -116,7 +116,7 @@ test('홈페이지 패밀리사이트(선택상자)에서 문화재단 찾아 �
   const rel = r.sources.filter(x => x.group === 'related');
   assert.deepStrictEqual(rel.map(x => x.url).sort(), ['https://www.cacf.or.kr/bbs/contest/list.do', 'https://www.cacf.or.kr/bbs/notice/list.do'], JSON.stringify(r.log, null, 1));
   assert.ok(rel.every(x => x.name.startsWith('천안문화재단')));
-  assert.ok(!r.log.some(l => l.includes('한국문화예술위원회')));
+  assert.ok(!r.log.some(l => /한국문화예술위원회|평생학습관|청소년재단/.test(l)), JSON.stringify(r.log));
 });
 
 test('지역 이름 매칭', () => {

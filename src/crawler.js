@@ -99,6 +99,7 @@ async function discoverAndSave(name) {
     replaceSources(name, result.sources.map(s => ({ ...s, name: s.name.replace(row.full_name, name) })));
   }
   setRegionStatus(name, status, message);
+  setMeta('discover_log:' + name, JSON.stringify(result.log.slice(-40)));
   console.log(`  🧭 ${name}: ${message}`);
   return { status, message, sources: getSources(name), log: result.log };
 }

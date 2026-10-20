@@ -193,7 +193,10 @@ app.get('/status', (req, res) => {
   const rows = getRegions().map(r => {
     const src = getSources(r.name).map(s =>
       `<div class="${s.status}">${esc(s.kind === 'eminwon' ? '고시공고' : '게시판')} · ${esc(s.status || '대기')} · 목록 ${s.rows_last || 0}줄 · 발견 ${s.found_last || 0}${s.last_error ? ' · ' + esc(s.last_error) : ''}<br><small>${esc(s.url)}</small></div>`).join('');
-    return `<tr><td><b>${esc(r.name)}</b><br><small>${esc(r.domain || '')}</small></td><td class="${esc(r.status)}">${esc(r.message || r.status)}</td><td>${src || '-'}</td></tr>`;
+    let dlog = [];
+    try { dlog = JSON.parse(getMeta('discover_log:' + r.name) || '[]'); } catch {}
+    const logHtml = dlog.length ? `<details><summary><small>탐색 기록</small></summary><small>${dlog.map(esc).join('<br>')}</small></details>` : '';
+    return `<tr><td><b>${esc(r.name)}</b><br><small>${esc(r.domain || '')}</small></td><td class="${esc(r.status)}">${esc(r.message || r.status)}${logHtml}</td><td>${src || '-'}</td></tr>`;
   }).join('');
   res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>푸드트럭 알리미 서버 상태</title>

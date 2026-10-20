@@ -56,7 +56,9 @@ function collectAnchors(html, pageUrl) {
 
 // ========== 관련 기관 (문화재단 등) ==========
 // 시청 홈페이지의 링크/패밀리사이트에서 이 이름이 보이면 관련 기관으로 보고 같이 크롤링
-const RELATED_RE = /문화관광재단|문화재단|관광재단|문화원|축제\s*(추진)?\s*위원회|축제조직위|관광공사|청소년\s*재단|평생학습/;
+// 문화재단 계열만 (평생학습관·청소년재단·장학재단 등은 푸드트럭 공고와 무관하므로 제외)
+const RELATED_RE = /문화관광재단|문화재단|관광재단|문화제\s*재단|축제\s*(추진)?\s*위원회|축제\s*조직\s*위원회/;
+const RELATED_EXCLUDE_RE = /평생|학습|청소년|복지|장학|교육|체육|한국|국립|중앙|전국/;
 const RELATED_BOARD_PATTERNS = [
   /^공지사항$/, /^(공지|알림|새소식|알림마당)$/, /공지사항/,
   /^(공모|모집)/, /공모\s*사업|지원\s*사업|모집\s*공고|참여\s*모집|셀러/, /^입찰/, /^공고$/,
@@ -66,7 +68,12 @@ const RELATED_SEEDS = {
   'nonsan.go.kr': [{ name: '논산문화관광재단', url: 'https://www.nonsan.go.kr/cntf/', boards: [
     'https://www.nonsan.go.kr/cntf/html/sub05/0501.html', 'https://www.nonsan.go.kr/cntf/html/sub05/0502.html',
     'https://www.nonsan.go.kr/cntf/html/sub05/0503.html'] }],
-  'gongju.go.kr': [{ name: '공주문화관광재단', url: 'https://www.gongjucf.or.kr/' }],
+  'gongju.go.kr': [{ name: '공주문화관광재단', url: 'https://www.gongjucf.or.kr/' },
+    { name: '백제문화제재단', url: 'https://www.baekje.org/', boards: ['https://www.baekje.org/kor/html/sub05/0501.html'] }],
+  'buyeo.go.kr': [
+    { name: '백제문화재단', url: 'https://www.baekjecf.or.kr/', boards: [
+      'https://www.baekjecf.or.kr/community/01.php', 'https://www.baekjecf.or.kr/community/03.php'] },
+    { name: '백제문화제재단', url: 'https://www.baekje.org/', boards: ['https://www.baekje.org/kor/html/sub05/0501.html'] }],
   'seocheon.go.kr': [{ name: '서천문화관광재단', url: 'https://www.seocheonctf.or.kr/' }],
   'iksan.go.kr': [{ name: '익산문화관광재단', url: 'https://www.ictf.or.kr/' }],
   'jeonju.go.kr': [{ name: '전주문화재단', url: 'https://www.jjcf.or.kr/' }],
@@ -87,7 +94,7 @@ function findRelatedCandidates(anchors, domain) {
   for (const seed of RELATED_SEEDS[domain] || []) add(seed);
   for (const a of anchors) {
     if (!a.text || a.text.length > 25 || !RELATED_RE.test(a.text)) continue;
-    if (/한국|국립|중앙|전국/.test(a.text)) continue; // 전국 단위 기관 제외
+    if (RELATED_EXCLUDE_RE.test(a.text)) continue; // 무관한 기관·전국 단위 기관 제외
     add({ name: a.text.replace(/\s*(바로가기|새창|새 창|열림)\s*/g, '').trim(), url: a.url });
   }
   return out.slice(0, MAX_RELATED_SITES + 2);
@@ -143,9 +150,11 @@ function sameSite(url, domain) {
 
 // 우선순위 순서대로 시도
 const NOTICE_PATTERNS = [
-  /^공지사항$/, /^새소식$/, /^공지$/, /^(시정|군정|구정|도정)\s*소식$/, /^알림사항$/,
-  /공지사항|새소식/,
+  /^공지\s*사항$/, /^새\s*소식$/, /^공지$/, /^(공지|공고)\s*사항$/, /^(시정|군정|구정|도정)\s*(소식|알림)$/,
+  /^알림\s*(사항|소식)$/, /공지사항|새소식/,
 ];
+// 홈페이지에 공지사항 링크가 없을 때 한 단계 더 들어가 볼 메뉴 (상위 메뉴 페이지)
+const SECTION_PATTERNS = [/^(소식|알림|알림마당|소식\s*마당|열린\s*(시정|군정|구정|도정)|참여\s*마당|소통\s*(참여|마당)|군정\s*소식|시정\s*소식|정보\s*공개)$/];
 const GOSI_PATTERNS = [
   /^고시\s*[\/·.,]?\s*공고$/, /^공고\s*[\/·.,]?\s*고시$/, /^고시공고$/, /^공고$/,
   /고시\s*[\/·.,]?\s*공고|공고\s*[\/·.,]?\s*고시/,
@@ -274,24 +283,40 @@ async function discoverRegion(regionInput) {
     } catch (e) { log.push(`새올 확인 실패 ${origin}: ${e.message}`); }
   }
 
-  // 3) 공지사항
-  const noticeLinks = pickLinks(anchors, domain, NOTICE_PATTERNS, 3);
+  // 3) 공지사항 (반드시 찾도록: 홈 → 상위 메뉴 페이지까지)
+  let noticeLinks = pickLinks(anchors, domain, NOTICE_PATTERNS, 3);
   const boardUrls = new Set();
-  for (const n of noticeLinks) {
-    try {
-      const v = await verifyBoard(n);
-      if (v.rows >= 3 && !boardUrls.has(v.url)) {
-        boardUrls.add(v.url);
-        sources.push({ kind: 'board', group: 'gov', name: `${label} 공지사항`, url: v.url, rows: v.rows });
-        log.push(`공지사항 연결: ${v.url} (${v.rows}줄)`);
-        break; // 공지사항은 하나면 충분
-      } else {
+  const tryNotice = async (links) => {
+    for (const n of links) {
+      try {
+        const v = await verifyBoard(n);
+        if (v.rows >= 3 && !boardUrls.has(v.url)) {
+          boardUrls.add(v.url);
+          sources.push({ kind: 'board', group: 'gov', name: `${label} 공지사항`, url: v.url, rows: v.rows });
+          log.push(`공지사항 연결: ${v.url} (${v.rows}줄)`);
+          return true;
+        }
         log.push(`공지사항 후보 인식 실패(${v.rows}줄): ${n}`);
-      }
-    } catch (e) { log.push(`공지사항 실패 ${n}: ${e.message}`); }
-    await sleep(500);
+      } catch (e) { log.push(`공지사항 실패 ${n}: ${e.message}`); }
+      await sleep(500);
+    }
+    return false;
+  };
+  let noticeOk = await tryNotice(noticeLinks);
+  if (!noticeOk) {
+    const sections = pickLinks(anchors, domain, SECTION_PATTERNS, 4);
+    log.push(`공지사항 못 찾음 → 상위 메뉴 ${sections.length}곳 탐색`);
+    for (const sec of sections) {
+      try {
+        const r = await fetchPage(sec, { retries: 0 });
+        const more = pickLinks(collectAnchors(r.html, r.finalUrl), domain, NOTICE_PATTERNS, 3)
+          .filter(u => !noticeLinks.includes(u));
+        noticeLinks = noticeLinks.concat(more);
+        if (more.length && (noticeOk = await tryNotice(more))) break;
+      } catch (e) { log.push(`상위 메뉴 실패 ${sec}: ${e.message}`); }
+      await sleep(500);
+    }
   }
-
   // 고시공고 메뉴가 새올이 아니고 일반 게시판인 경우도 수집
   if (!sources.some(s => s.kind === 'eminwon')) {
     for (const g of gosiLinks) {
