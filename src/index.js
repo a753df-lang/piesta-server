@@ -11,6 +11,7 @@ const { notifyNewNotices, pushEnabled, VAPID_PUBLIC } = require('./notifier');
 const { naverEnabled } = require('./naver');
 const { DEFAULT_REGIONS, KEYWORDS } = require('./sites.config');
 const { findRegion } = require('./discover');
+const { eminwonListUrl } = require('./scanner');
 const {
   getNotices, getCrawlStats,
   addSubscription, removeSubscription, markAsRead, deleteNotice,
@@ -89,6 +90,8 @@ function regionView(r) {
     isDefault: DEFAULT_REGIONS.includes(r.name),
     sources: getSources(r.name).map(s => ({
       kind: s.kind, name: s.name, url: s.url, status: s.status,
+      // 사람이 열어볼 수 있는 목록 페이지 주소 (새올은 origin 만 저장돼 있으므로 목록 주소로 변환)
+      link: s.kind === 'eminwon' ? eminwonListUrl(s.url, 10) : s.url,
       rows: s.rows_last, found: s.found_last, error: s.last_error, lastRun: s.last_run,
     })),
   };
