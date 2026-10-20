@@ -1,291 +1,240 @@
-// crawler.js v3 - 개별 공고 URL 추출 + 사용자 사이트 자동 감지
-const axios = require('axios');
-const cheerio = require('cheerio');
-const iconv = require('iconv-lite');
+// crawler.js v4 - 지역 자동 탐색 + 범용 스캐너 + 자가 복구
+//  - 지역마다 고시공고(새올)·공지사항을 자동으로 찾아 크롤링
+//  - 게시판 줄을 하나도 못 읽으면 'empty' 로 기록 (조용히 0건 처리하지 않음)
+//  - 12회 연속 실패/빈 결과면 해당 지역을 다시 탐색 (홈페이지 개편 자동 대응)
 const crypto = require('crypto');
-const { SITES, KEYWORDS } = require('./sites.config');
+const { SITES, KEYWORDS, DEFAULT_REGIONS } = require('./sites.config');
 const {
-  upsertNotice, logCrawlStart, logCrawlEnd,
+  fetchPage, scanBoard, parseEminwon, eminwonListUrl, makeKeywordMatcher, sleep,
+} = require('./scanner');
+const { findRegion, shortName, discoverRegion } = require('./discover');
+const naver = require('./naver');
+const {
+  upsertNotice, logCrawlStart, logCrawlEnd, pruneCrawlLog,
   getUserSites, updateUserSiteStatus,
+  getRegion, getRegions, addRegion, setRegionStatus,
+  replaceSources, getSources, updateSourceResult,
+  getMeta, setMeta,
 } = require('./db');
 
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-const TIMEOUT = 15000;
-
-async function fetchHtml(url, encoding = 'utf-8') {
-  const res = await axios.get(url, {
-    timeout: TIMEOUT,
-    responseType: 'arraybuffer',
-    headers: {
-      'User-Agent': USER_AGENT,
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9',
-      'Accept-Language': 'ko-KR,ko;q=0.9',
-    },
-    httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false }),
-  });
-
-  const contentType = res.headers['content-type'] || '';
-  let charset = encoding;
-  const charsetMatch = contentType.match(/charset=([^;]+)/i);
-  if (charsetMatch) charset = charsetMatch[1].trim().toLowerCase();
-
-  let html;
-  if (charset.includes('euc-kr') || charset.includes('ks_c_5601')) {
-    html = iconv.decode(Buffer.from(res.data), 'euc-kr');
-  } else {
-    html = Buffer.from(res.data).toString('utf-8');
-  }
-  return html;
-}
-
-function isFoodTruckRelated(text) {
-  if (!text) return false;
-  const lower = text.toLowerCase().replace(/\s/g, '');
-  return KEYWORDS.some(kw => lower.includes(kw.toLowerCase().replace(/\s/g, '')));
-}
-
-function toAbsoluteUrl(linkBase, href) {
-  if (!href) return null;
-  if (href.startsWith('http://') || href.startsWith('https://')) return href;
-  if (href.startsWith('//')) return 'https:' + href;
-  if (href.startsWith('/')) {
-    try { const u = new URL(linkBase); return u.origin + href; }
-    catch { return linkBase + href; }
-  }
-  if (href.startsWith('?')) {
-    const base = linkBase.split('?')[0];
-    return base + href;
-  }
-  if (!linkBase.endsWith('/')) linkBase = linkBase + '/';
-  return linkBase + href;
-}
+const isFoodTruckRelated = makeKeywordMatcher(KEYWORDS);
+const DELAY = 1200;
+const REDISCOVER_AFTER_FAILS = 12;           // 매시간 크롤 기준 약 12시간
+const REDISCOVER_INTERVAL = 7 * 86400000;    // 정상이어도 7일마다 재탐색
+const RETRY_FAILED_DISCOVERY = 6 * 3600000;  // 탐색 실패 지역은 6시간 뒤 재시도
+const NAVER_INTERVAL = 3 * 3600000;
 
 function makeNoticeId(siteId, url, title) {
   const hash = crypto.createHash('md5').update(url + '|' + title).digest('hex').slice(0, 12);
   return `${siteId}_${hash}`;
 }
 
-function parseDate(text) {
-  if (!text) return null;
-  const cleaned = text.replace(/\s/g, '');
-  const m = cleaned.match(/(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})/);
-  if (!m) return null;
-  const [, y, mo, d] = m;
-  return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
+function toNotice(siteId, region, org, item, fallbackUrl) {
+  const url = item.url || fallbackUrl;
+  return {
+    id: makeNoticeId(siteId, url, item.title),
+    site_id: siteId, region, org,
+    title: item.title, url,
+    posted_date: item.date || null,
+    raw_text: item.title,
+  };
 }
 
-function extractNoticeUrl(titleEl, $row, linkBase, listUrl) {
-  let href = titleEl.attr('href') || '';
-  if (href && href !== '#' && !href.startsWith('javascript:')) {
-    return toAbsoluteUrl(linkBase, href);
-  }
-
-  const onclick = titleEl.attr('onclick') || titleEl.parent().attr('onclick') || $row.attr('onclick') || '';
-  if (onclick) {
-    const hrefMatch = onclick.match(/location\.href\s*=\s*['"]([^'"]+)['"]/);
-    if (hrefMatch) return toAbsoluteUrl(linkBase, hrefMatch[1]);
-
-    const idMatch = onclick.match(/(?:goView|fnView|view|moveView|boardView|fn_egov_select|doView)\s*\(\s*['"]?(\d+)['"]?/i);
-    if (idMatch) {
-      const noticeId = idMatch[1];
-      const sep = listUrl.includes('?') ? '&' : '?';
-
-      if (linkBase.includes('iksan.go.kr')) {
-        return `${linkBase}/index.iksan?menuCd=DOM_000002003009003000&boardId=BBS_0000019&dataSid=${noticeId}`;
-      }
-      if (linkBase.includes('gunsan.go.kr')) {
-        return `${linkBase}/main/view.gunsan?dataSid=${noticeId}&menuCd=DOM_000000104001003000`;
-      }
-      if (linkBase.includes('jeonbuk.go.kr')) {
-        return `${linkBase}/board/view.jeonbuk?boardId=BBS_0000005&menuCd=DOM_000000110002000000&dataSid=${noticeId}`;
-      }
-      if (listUrl.includes('/list')) {
-        return listUrl.replace('/list', '/view') + sep + 'dataSid=' + noticeId;
-      }
-      return listUrl + sep + 'dataSid=' + noticeId;
-    }
-  }
-
-  const dataId = titleEl.attr('data-id') || titleEl.attr('data-no') || titleEl.attr('data-seq') || titleEl.attr('data-sid');
-  if (dataId) {
-    const sep = listUrl.includes('?') ? '&' : '?';
-    return listUrl + sep + 'dataSid=' + dataId;
-  }
-
-  return listUrl;
+function saveItems(items) {
+  let newCount = 0;
+  for (const n of items) if (upsertNotice(n).isNew) newCount++;
+  return newCount;
 }
 
-async function crawlGenericBoard(site) {
-  const html = await fetchHtml(site.listUrl, site.encoding);
-  const $ = cheerio.load(html);
+// ========== 지역 ==========
 
-  const items = [];
-  const rows = $(site.rowSelector);
-
-  rows.each((_, row) => {
-    const $row = $(row);
-    const titleEl = $row.find(site.titleSelector).first();
-    const title = titleEl.text().trim().replace(/\s+/g, ' ');
-
-    if (!title) return;
-    if (!isFoodTruckRelated(title)) return;
-
-    const url = extractNoticeUrl(titleEl, $row, site.linkBase, site.listUrl);
-    const dateText = $row.find(site.dateSelector).first().text().trim();
-    const postedDate = parseDate(dateText);
-
-    items.push({
-      id: makeNoticeId(site.id, url, title),
-      site_id: site.id,
-      region: site.region,
-      org: site.name,
-      title,
-      url,
-      posted_date: postedDate,
-      raw_text: title,
-    });
-  });
-
-  return items;
+// 지역을 DB에 등록 (없으면). 반환: DB row
+function ensureRegion(name) {
+  let row = getRegion(name);
+  if (row) return row;
+  const info = findRegion(name);
+  addRegion({ name, full_name: info ? info.name : null, domain: info ? info.domain : null });
+  if (!info) setRegionStatus(name, 'unknown', '전국 지자체 목록에 없는 이름입니다. 사이트를 직접 추가해 주세요.');
+  return getRegion(name);
 }
 
-// ========== 🆕 사용자 사이트 자동 크롤링 ==========
+// 지역 대상 사이트 자동 탐색 후 저장. 반환: { status, message, sources, log }
+async function discoverAndSave(name) {
+  const row = ensureRegion(name);
+  if (!row.domain) {
+    return { status: 'unknown', message: row.message, sources: [], log: [] };
+  }
+  const result = await discoverRegion({ name: row.full_name, domain: row.domain });
+  const hasGosi = result.sources.some(s => s.kind === 'eminwon' || /고시공고/.test(s.name));
+  const hasNotice = result.sources.some(s => /공지사항/.test(s.name));
+  let status, message;
+  if (hasGosi && hasNotice) { status = 'ok'; message = '고시공고·공지사항 자동 연결됨'; }
+  else if (result.sources.length) {
+    status = 'partial';
+    message = hasGosi ? '고시공고만 연결됨 (공지사항 자동 인식 실패)' : '공지사항만 연결됨 (고시공고 자동 인식 실패)';
+  } else {
+    status = 'failed';
+    message = result.log.find(l => /접속 불가/.test(l)) || '자동 연결 실패 - 사이트를 직접 추가해 주세요';
+  }
 
-// 일반적인 한국 시청 게시판 selector 조합 (가능성 높은 순)
-const AUTO_SELECTOR_PATTERNS = [
-  { row: 'table.board_list tbody tr, .board_list tbody tr', title: 'td.subject a, td.title a, td a', date: 'td.date, td:last-child' },
-  { row: 'table.bbs_list tbody tr, .bbs_list tbody tr', title: 'td.subject a, td a', date: 'td.date' },
-  { row: 'table tbody tr', title: 'td.title a, td.subject a, td a', date: 'td:nth-last-child(2), td.date' },
-  { row: '.board ul li, .notice_list li, .bbs_list li', title: 'a.subject, a.title, a', date: '.date, .day' },
-  { row: 'tr.list_tr, tr.notice', title: 'a', date: '.date' },
-  { row: 'tbody > tr', title: 'a[href*="view"], a[onclick*="view"], a', date: 'td' },
-];
+  // 탐색 실패 시 기존에 잘 되던 대상은 유지 (일시적 장애로 지우지 않음)
+  const existing = getSources(name);
+  if (result.sources.length > 0 || existing.length === 0) {
+    replaceSources(name, result.sources.map(s => ({ ...s, name: s.name.replace(row.full_name, name) })));
+  }
+  setRegionStatus(name, status, message);
+  console.log(`  🧭 ${name}: ${message}`);
+  return { status, message, sources: getSources(name), log: result.log };
+}
 
-// 사용자 사이트 자동 크롤링 (여러 selector 시도)
-async function crawlUserSite(userSite) {
-  const html = await fetchHtml(userSite.url, 'utf-8');
-  const $ = cheerio.load(html);
+function needsDiscovery(region, sources) {
+  if (!region.domain) return false;
+  const now = Date.now();
+  if (region.status === 'pending' || !region.discovered_at) return true;
+  if (sources.length === 0) return now - region.discovered_at > RETRY_FAILED_DISCOVERY;
+  if (now - region.discovered_at > REDISCOVER_INTERVAL) return true;
+  return sources.some(s => s.fail_streak >= REDISCOVER_AFTER_FAILS);
+}
 
-  // URL에서 base 추출
-  let linkBase;
+// ========== 크롤 단위 ==========
+
+async function crawlSource(src) {
+  const logId = logCrawlStart(src.id);
   try {
-    const u = new URL(userSite.url);
-    linkBase = u.origin;
-  } catch {
-    linkBase = userSite.url;
-  }
-
-  let bestResult = { items: [], pattern: null };
-
-  // 각 selector 패턴 시도
-  for (const pattern of AUTO_SELECTOR_PATTERNS) {
-    const items = [];
-    const rows = $(pattern.row);
-    if (rows.length === 0) continue;
-
-    rows.each((_, row) => {
-      const $row = $(row);
-      const titleEl = $row.find(pattern.title).first();
-      const title = titleEl.text().trim().replace(/\s+/g, ' ');
-
-      if (!title || title.length < 3) return;
-      if (!isFoodTruckRelated(title)) return;
-
-      const url = extractNoticeUrl(titleEl, $row, linkBase, userSite.url);
-      const dateText = $row.find(pattern.date).first().text().trim();
-      const postedDate = parseDate(dateText);
-
-      items.push({
-        id: makeNoticeId(userSite.id, url, title),
-        site_id: userSite.id,
-        region: userSite.region,
-        org: userSite.name,
-        title,
-        url,
-        posted_date: postedDate,
-        raw_text: title,
-      });
+    let parsed, fallbackUrl;
+    if (src.kind === 'eminwon') {
+      fallbackUrl = eminwonListUrl(src.url, 50);
+      const { html } = await fetchPage(fallbackUrl);
+      parsed = parseEminwon(html, src.url);
+    } else {
+      const { html, finalUrl } = await fetchPage(src.url);
+      fallbackUrl = finalUrl;
+      parsed = scanBoard(html, finalUrl);
+    }
+    const items = parsed.items
+      .filter(it => isFoodTruckRelated(it.title))
+      .map(it => toNotice(src.id, src.region, src.name, it, fallbackUrl));
+    const newCount = saveItems(items);
+    updateSourceResult(src.id, { ok: true, rows: parsed.rows, found: items.length });
+    logCrawlEnd(logId, {
+      status: parsed.rows > 0 ? 'success' : 'empty', found_count: items.length, new_count: newCount,
+      error: parsed.rows > 0 ? null : '게시글 목록을 읽지 못함 (주소/구조 변경 의심)',
     });
-
-    // 매칭되는 게시글 발견 → 이 패턴이 정답
-    if (items.length > bestResult.items.length) {
-      bestResult = { items, pattern };
-    }
-
-    // 푸드트럭 키워드 매칭된 항목이 1개라도 있으면 이게 정답
-    if (items.length > 0) break;
-  }
-
-  return bestResult.items;
-}
-
-// ========== 크롤 실행 ==========
-
-async function crawlSite(site, isUserSite = false) {
-  const logId = logCrawlStart(site.id);
-  console.log(`[${new Date().toISOString()}] 🔍 ${site.name} 크롤 시작...`);
-
-  try {
-    let items = [];
-    if (isUserSite) {
-      items = await crawlUserSite(site);
-    } else if (site.type === 'generic') {
-      items = await crawlGenericBoard(site);
-    }
-
-    let newCount = 0;
-    for (const item of items) {
-      const result = upsertNotice(item);
-      if (result.isNew) newCount++;
-    }
-
-    logCrawlEnd(logId, { status: 'success', found_count: items.length, new_count: newCount });
-    if (isUserSite) {
-      updateUserSiteStatus(site.id, 'success', null, true);
-    }
-    console.log(`  ✅ ${site.name}: 발견 ${items.length}건, 신규 ${newCount}건`);
-    return { site: site.name, found: items.length, isNew: newCount, items };
+    console.log(`  ${parsed.rows > 0 ? '✅' : '⚠️'} ${src.name}: 목록 ${parsed.rows}줄, 발견 ${items.length}, 신규 ${newCount}`);
+    return { site: src.name, rows: parsed.rows, found: items.length, isNew: newCount };
   } catch (err) {
-    console.error(`  ❌ ${site.name} 크롤 실패:`, err.message);
+    updateSourceResult(src.id, { ok: false, error: err.message });
     logCrawlEnd(logId, { status: 'error', error: err.message });
-    if (isUserSite) {
-      updateUserSiteStatus(site.id, 'error', err.message, false);
-    }
+    console.error(`  ❌ ${src.name}: ${err.message}`);
+    return { site: src.name, error: err.message };
+  }
+}
+
+// 고정 사이트 / 사용자 직접 등록 사이트 (범용 스캐너)
+async function crawlSite(site, isUserSite = false) {
+  const url = site.listUrl || site.url;
+  const logId = logCrawlStart(site.id);
+  try {
+    const { html, finalUrl } = await fetchPage(url);
+    const parsed = scanBoard(html, finalUrl);
+    const items = parsed.items
+      .filter(it => isFoodTruckRelated(it.title))
+      .map(it => toNotice(site.id, site.region, site.name, it, finalUrl));
+    const newCount = saveItems(items);
+    const ok = parsed.rows > 0;
+    logCrawlEnd(logId, {
+      status: ok ? 'success' : 'empty', found_count: items.length, new_count: newCount,
+      error: ok ? null : '게시글 목록을 읽지 못함 (게시판 목록 주소인지 확인 필요)',
+    });
+    if (isUserSite) updateUserSiteStatus(site.id, ok ? 'success' : 'empty', ok ? null : '게시글 목록을 읽지 못함', ok);
+    console.log(`  ${ok ? '✅' : '⚠️'} ${site.name}: 목록 ${parsed.rows}줄, 발견 ${items.length}, 신규 ${newCount}`);
+    return { site: site.name, rows: parsed.rows, found: items.length, isNew: newCount, items };
+  } catch (err) {
+    logCrawlEnd(logId, { status: 'error', error: err.message });
+    if (isUserSite) updateUserSiteStatus(site.id, 'error', err.message, false);
+    console.error(`  ❌ ${site.name}: ${err.message}`);
     return { site: site.name, error: err.message };
   }
 }
 
-async function crawlAll() {
-  console.log(`\n=== 푸드트럭 공고 크롤링 시작 (${new Date().toLocaleString('ko-KR')}) ===\n`);
+// 하위 호환
+const crawlUserSite = (site) => crawlSite(site, true);
+
+async function crawlNaver(regions) {
+  if (!naver.naverEnabled) return [];
+  const last = Number(getMeta('naver_last') || 0);
+  if (Date.now() - last < NAVER_INTERVAL) return [];
+  setMeta('naver_last', Date.now());
   const results = [];
-
-  // 기본 사이트 크롤링
-  for (const site of SITES) {
-    const result = await crawlSite(site, false);
-    results.push(result);
-    await new Promise(r => setTimeout(r, 1500));
-  }
-
-  // 🆕 사용자 등록 사이트 크롤링
-  const userSites = getUserSites();
-  if (userSites.length > 0) {
-    console.log(`\n--- 사용자 등록 사이트 (${userSites.length}개) ---\n`);
-    for (const userSite of userSites) {
-      const result = await crawlSite(userSite, true);
-      results.push(result);
-      await new Promise(r => setTimeout(r, 1500));
+  for (const r of regions) {
+    const short = shortName(r.full_name || r.name);
+    const logId = logCrawlStart(`naver:${r.name}`);
+    try {
+      const found = await naver.searchRegion(short, isFoodTruckRelated);
+      const items = found.map(it => toNotice('naver', r.name, it.source, it, it.url));
+      const newCount = saveItems(items);
+      logCrawlEnd(logId, { status: 'success', found_count: items.length, new_count: newCount });
+      results.push({ site: `네이버:${r.name}`, found: items.length, isNew: newCount });
+    } catch (err) {
+      logCrawlEnd(logId, { status: 'error', error: err.message });
+      results.push({ site: `네이버:${r.name}`, error: err.message });
     }
   }
-
-  const totalNew = results.reduce((sum, r) => sum + (r.isNew || 0), 0);
-  const totalFound = results.reduce((sum, r) => sum + (r.found || 0), 0);
-  const errors = results.filter(r => r.error).length;
-
-  console.log(`\n=== 크롤 완료: 총 ${totalFound}건 발견, ${totalNew}건 신규, ${errors}건 실패 ===\n`);
-  return { results, totalNew, totalFound };
+  return results;
 }
 
-module.exports = { crawlSite, crawlAll, crawlUserSite };
+// ========== 전체 실행 ==========
+let running = null;
+
+async function crawlAll() {
+  if (running) {
+    console.log('⏳ 이미 크롤링 중 - 기존 작업 결과를 기다립니다');
+    return running;
+  }
+  running = (async () => {
+    console.log(`\n=== 푸드트럭 공고 크롤링 시작 (${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })}) ===\n`);
+    const results = [];
+
+    for (const name of DEFAULT_REGIONS) ensureRegion(name);
+    const regions = getRegions();
+
+    for (const region of regions) {
+      if (needsDiscovery(region, getSources(region.name))) {
+        try { await discoverAndSave(region.name); }
+        catch (e) { console.error(`  탐색 오류 ${region.name}:`, e.message); }
+      }
+      for (const src of getSources(region.name)) {
+        results.push(await crawlSource(src));
+        await sleep(DELAY);
+      }
+    }
+
+    for (const site of SITES) {
+      results.push(await crawlSite(site, false));
+      await sleep(DELAY);
+    }
+
+    const userSites = getUserSites();
+    for (const us of userSites) {
+      results.push(await crawlSite(us, true));
+      await sleep(DELAY);
+    }
+
+    results.push(...await crawlNaver(regions));
+    pruneCrawlLog();
+
+    const totalNew = results.reduce((s, r) => s + (r.isNew || 0), 0);
+    const totalFound = results.reduce((s, r) => s + (r.found || 0), 0);
+    const errors = results.filter(r => r.error).length;
+    const empty = results.filter(r => !r.error && r.rows === 0).length;
+    setMeta('last_crawl', Date.now());
+    console.log(`\n=== 크롤 완료: 발견 ${totalFound}, 신규 ${totalNew}, 실패 ${errors}, 목록없음 ${empty} ===\n`);
+    return { results: results.map(({ items, ...r }) => r), totalNew, totalFound, errors, empty };
+  })();
+  try { return await running; } finally { running = null; }
+}
+
+module.exports = { crawlSite, crawlAll, crawlUserSite, ensureRegion, discoverAndSave, isFoodTruckRelated };
 
 if (require.main === module) {
   crawlAll().then(() => process.exit(0)).catch(err => {
