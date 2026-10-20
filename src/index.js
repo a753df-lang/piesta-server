@@ -42,8 +42,18 @@ async function crawlAndNotify() {
   return result;
 }
 
+// 수집 중에 또 요청이 오면(예: 그 사이 앱에서 지역 추가) 끝난 뒤 한 번 더 실행
+let crawling = false;
+let rerunRequested = false;
 function runInBackground(label) {
-  crawlAndNotify().catch(err => console.error(`${label} 크롤 실패:`, err));
+  if (crawling) { rerunRequested = true; return; }
+  crawling = true;
+  crawlAndNotify()
+    .catch(err => console.error(`${label} 크롤 실패:`, err))
+    .finally(() => {
+      crawling = false;
+      if (rerunRequested) { rerunRequested = false; runInBackground('추가 요청'); }
+    });
 }
 
 // ========== 공고 API ==========

@@ -81,7 +81,15 @@ async function discoverAndSave(name) {
     return { status: 'unknown', message: row.message, sources: [], log: [] };
   }
   const result = await discoverRegion({ name: row.full_name, domain: row.domain });
-  const gov = result.sources.filter(s => s.group !== 'related');
+  const existing = getSources(name);
+  // 재탐색에서 일시적으로 빠진 대상(서버 응답 지연 등)은 기존 것을 유지해서 합침
+  if (existing.length && result.sources.length) {
+    const urls = new Set(result.sources.map(x => x.url));
+    for (const old of existing) {
+      if (!urls.has(old.url) && old.status === 'ok') result.sources.push({ kind: old.kind, group: 'kept', name: old.name, url: old.url, rows: old.rows_last });
+    }
+  }
+  const gov = result.sources.filter(s => s.group !== 'related' && !(s.group === 'kept' && !/(고시공고|공지사항|입찰공고)$/.test(s.name)));
   const relatedNames = [...new Set(result.sources.filter(s => s.group === 'related').map(s => s.name.replace(/\s\d+$/, '')))];
   const hasGosi = gov.some(s => s.kind === 'eminwon' || /고시공고/.test(s.name));
   const hasNotice = gov.some(s => /공지사항/.test(s.name));
@@ -99,7 +107,6 @@ async function discoverAndSave(name) {
   }
 
   // 탐색 실패 시 기존에 잘 되던 대상은 유지 (일시적 장애로 지우지 않음)
-  const existing = getSources(name);
   if (result.sources.length > 0 || existing.length === 0) {
     replaceSources(name, result.sources.map(s => ({ ...s, name: s.name.replace(row.full_name, name) })));
   }
@@ -114,6 +121,8 @@ function needsDiscovery(region, sources) {
   const now = Date.now();
   if (region.status === 'pending' || !region.discovered_at) return true;
   if (sources.length === 0) return now - region.discovered_at > RETRY_FAILED_DISCOVERY;
+  // 일부만 연결된 지역(예: 고시공고 서버 응답이 느려 실패)은 6시간마다 다시 찾음
+  if (region.status === 'partial' && now - region.discovered_at > RETRY_FAILED_DISCOVERY) return true;
   if (now - region.discovered_at > REDISCOVER_INTERVAL) return true;
   return sources.some(s => s.fail_streak >= REDISCOVER_AFTER_FAILS);
 }
