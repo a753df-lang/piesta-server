@@ -61,11 +61,16 @@ const GOSI_PATTERNS = [
   /고시\s*[\/·.,]?\s*공고|공고\s*[\/·.,]?\s*고시/,
 ];
 
+// 지난/이전 게시물 보관 메뉴는 제외 (예: '지난 고시공고', /PREVIOUS/)
+const OLD_ARCHIVE_TEXT = /지난|이전|과거|종료/;
+const OLD_ARCHIVE_URL = /previous|\/past|_past|archive/i;
+
 function pickLinks(anchors, domain, patterns, max) {
   const pick = [];
   for (const re of patterns) {
     for (const a of anchors) {
       if (a.text.length > 15 || !re.test(a.text)) continue;
+      if (OLD_ARCHIVE_TEXT.test(a.text) || OLD_ARCHIVE_URL.test(a.url)) continue;
       if (!sameSite(a.url, domain) || pick.includes(a.url)) continue;
       pick.push(a.url);
     }

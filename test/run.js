@@ -78,6 +78,19 @@ test('iframe 에서 새올 주소 찾기 (프로토콜 생략형)', () => {
   assert.deepStrictEqual(findEminwonOrigins(fx('nonsan-gosi.html'), 'https://www.nonsan.go.kr/x'), ['https://eminwon.nonsan21.net']);
 });
 
+test('지난 고시공고(보관 메뉴) 링크는 고르지 않음', async () => {
+  const home = '<a href="/prog/saeolGosi/PREVIOUS/kor/sub04_06_08/list.do">고시공고</a><a href="/kor/old.do">지난 고시공고</a><a href="/prog/saeolGosi/GOSI/kor/sub04_06_01/list.do">고시공고</a>'
+    + Array.from({ length: 45 }, (_, i) => `<a href="/m${i}.do">메뉴${i}</a>`).join('');
+  fs.writeFileSync(path.join(__dirname, 'fixtures', '_tmp-seocheon.html'), home);
+  ROUTES.unshift([/^https:\/\/www\.seocheon\.go\.kr\/$/, '_tmp-seocheon.html']);
+  const before = requested.length;
+  try { await discoverRegion({ name: '서천군', domain: 'seocheon.go.kr' }); }
+  finally { ROUTES.shift(); fs.unlinkSync(path.join(__dirname, 'fixtures', '_tmp-seocheon.html')); }
+  const seen = requested.slice(before);
+  assert.ok(seen.some(u => u.includes('/GOSI/kor/sub04_06_01/')), JSON.stringify(seen));
+  assert.ok(!seen.some(u => /PREVIOUS|old\.do/.test(u)), JSON.stringify(seen));
+});
+
 test('지역 이름 매칭', () => {
   assert.strictEqual(findRegion('논산').name, '논산시');
   assert.strictEqual(findRegion('논산시').domain, 'nonsan.go.kr');
