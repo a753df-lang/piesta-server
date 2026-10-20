@@ -231,6 +231,16 @@ async function crawlAll() {
       }
     }
 
+    // 수집 도중 앱에서 새로 추가된 지역도 이번에 같이 탐색·수집 (다음 예약 시각까지 기다리지 않게)
+    const doneNames = new Set(regions.map(r => r.name));
+    for (const region of getRegions().filter(r => !doneNames.has(r.name))) {
+      try { await discoverAndSave(region.name); } catch (e) { console.error(`  탐색 오류 ${region.name}:`, e.message); }
+      for (const src of getSources(region.name)) {
+        results.push(await crawlSource(src));
+        await sleep(DELAY);
+      }
+    }
+
     for (const site of SITES) {
       results.push(await crawlSite(site, false));
       await sleep(DELAY);

@@ -156,6 +156,42 @@ test('부여처럼 인트로 페이지가 먼저 뜨면 메인으로 들어가�
   assert.ok(r.log.some(l => l.startsWith('메인 이동: https://www.buyeo.go.kr/html/kr/')));
 });
 
+test('관련기관 첫 화면이 이동용 빈 페이지면 실제 메인으로 들어가 공지사항 연결', async () => {
+  const dir = path.join(__dirname, 'fixtures');
+  const home = '<select><option value="https://www.xxctf.or.kr/">보령문화관광재단</option></select>' + Array.from({ length: 45 }, (_, i) => `<a href="/m${i}.do">메뉴${i}</a>`).join('');
+  fs.writeFileSync(path.join(dir, '_r-home.html'), home);
+  fs.writeFileSync(path.join(dir, '_r-root.html'), "<script>\nwindow.location ='/index.do';\n</script>");
+  fs.writeFileSync(path.join(dir, '_r-main.html'), '<a href="/board/notice/list.do">공지사항</a><a href="/">HOME</a>');
+  const extra = [
+    [/^https:\/\/www\.brcn\.go\.kr\/$/, '_r-home.html'],
+    [/^https:\/\/www\.xxctf\.or\.kr\/$/, '_r-root.html'],
+    [/^https:\/\/www\.xxctf\.or\.kr\/index\.do$/, '_r-main.html'],
+    [/^https:\/\/www\.xxctf\.or\.kr\/board\/notice\/list\.do$/, 'nonsan-notice.html'],
+  ];
+  ROUTES.unshift(...extra);
+  let r;
+  try { r = await discoverRegion('보령'); }
+  finally { ROUTES.splice(0, extra.length); for (const f of ['_r-home', '_r-root', '_r-main']) fs.unlinkSync(path.join(dir, f + '.html')); }
+  const rel = r.sources.filter(x => x.group === 'related');
+  assert.deepStrictEqual(rel.map(x => x.url), ['https://www.xxctf.or.kr/board/notice/list.do'], JSON.stringify(r.log, null, 1));
+});
+
+test('홈페이지 주소(kor.do 등)는 게시판으로 인정하지 않음', async () => {
+  const dir = path.join(__dirname, 'fixtures');
+  const home = '<a href="/kor.do">고시공고</a><a href="/cop/bbs/BBSMSTR_37/selectBoardList.do">공지사항</a>' + Array.from({ length: 45 }, (_, i) => `<a href="/m${i}.do">메뉴${i}</a>`).join('');
+  fs.writeFileSync(path.join(dir, '_h-home.html'), home);
+  const extra = [
+    [/^https:\/\/www\.cheongyang\.go\.kr\/$/, '_h-home.html'],
+    [/^https:\/\/www\.cheongyang\.go\.kr\/kor\.do$/, 'nonsan-notice.html'],
+    [/BBSMSTR_37\/selectBoardList\.do/, 'nonsan-notice.html'],
+  ];
+  ROUTES.unshift(...extra);
+  let r;
+  try { r = await discoverRegion('청양'); } finally { ROUTES.splice(0, extra.length); fs.unlinkSync(path.join(dir, '_h-home.html')); }
+  assert.ok(!r.sources.some(x => /kor\.do$/.test(x.url)), JSON.stringify(r.sources));
+  assert.ok(r.sources.some(x => x.name === '청양군 공지사항'));
+});
+
 test('지역 이름 매칭', () => {
   assert.strictEqual(findRegion('논산').name, '논산시');
   assert.strictEqual(findRegion('논산시').domain, 'nonsan.go.kr');

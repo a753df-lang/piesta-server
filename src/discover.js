@@ -68,13 +68,14 @@ const RELATED_SEEDS = {
   'nonsan.go.kr': [{ name: '논산문화관광재단', url: 'https://www.nonsan.go.kr/cntf/', boards: [
     'https://www.nonsan.go.kr/cntf/html/sub05/0501.html', 'https://www.nonsan.go.kr/cntf/html/sub05/0502.html',
     'https://www.nonsan.go.kr/cntf/html/sub05/0503.html'] }],
-  'gongju.go.kr': [{ name: '공주문화관광재단', url: 'https://www.gongjucf.or.kr/' },
+  'gongju.go.kr': [{ name: '공주문화관광재단', url: 'https://www.gongjucf.or.kr/gongjucf/main/view' },
     { name: '백제문화제재단', url: 'https://www.baekje.org/', boards: ['https://www.baekje.org/kor/html/sub05/0501.html'] }],
   'buyeo.go.kr': [
     { name: '백제문화재단', url: 'https://www.baekjecf.or.kr/', boards: [
       'https://www.baekjecf.or.kr/community/01.php', 'https://www.baekjecf.or.kr/community/03.php'] },
     { name: '백제문화제재단', url: 'https://www.baekje.org/', boards: ['https://www.baekje.org/kor/html/sub05/0501.html'] }],
-  'seocheon.go.kr': [{ name: '서천문화관광재단', url: 'https://www.seocheonctf.or.kr/' }],
+  'seocheon.go.kr': [{ name: '서천문화관광재단', url: 'https://www.seocheonctf.or.kr/index.do',
+    boards: ['https://www.seocheonctf.or.kr/board/notice/list.do'] }],
   'iksan.go.kr': [{ name: '익산문화관광재단', url: 'https://www.ictf.or.kr/' }],
   'jeonju.go.kr': [{ name: '전주문화재단', url: 'https://www.jjcf.or.kr/' }],
 };
@@ -105,15 +106,31 @@ async function discoverRelatedSite(site, log, usedUrls) {
   const found = [];
   let candidates = (site.boards || []).slice();
   try {
-    const home = await fetchPage(site.url, { retries: 0 });
+    let home = await fetchPage(site.url, { retries: 0 });
     const host = new URL(home.finalUrl).hostname;
-    const prefix = new URL(site.url).pathname.split('/')[1] || '';
+    // 첫 화면이 이동용 빈 페이지(예: window.location='/index.do')거나 여러 기관을 묶은 포털이면 한 번 더 들어감
+    const sameHost = (h) => collectAnchors(h.html, h.finalUrl).filter(a => { try { return new URL(a.url).hostname === host; } catch { return false; } });
+    const hasBoardLink = (list) => list.some(a => a.text.length <= 15 && RELATED_BOARD_PATTERNS.some(re => re.test(a.text)));
+    let first = sameHost(home);
+    if (!hasBoardLink(first)) {
+      const core = site.name.replace(/^\(재\)\s*/, '').replace(/\s+/g, '');
+      const byName = first.find(a => a.text.replace(/\s+/g, '').includes(core) && a.url !== home.finalUrl);
+      const next = (byName && byName.url) || findMainRedirect(home.html, home.finalUrl, host.replace(/^www\./, ''));
+      if (next && next !== home.finalUrl) {
+        try {
+          home = await fetchPage(next, { retries: 0 });
+          log.push(`관련기관 메인 이동: ${site.name} → ${home.finalUrl}`);
+        } catch (e) { log.push(`관련기관 메인 이동 실패 ${site.name}: ${e.message}`); }
+      }
+    }
+    const prefix = new URL(home.finalUrl).pathname.split('/')[1] || '';
+    const usePrefix = prefix && !/\.\w+$/.test(prefix) && new URL(site.url).pathname.split('/')[1] === prefix;
     const anchors = collectAnchors(home.html, home.finalUrl).filter(a => {
       try {
         const u = new URL(a.url);
         if (u.hostname !== host) return false;
         // 시청 도메인 아래 하위 경로로 운영되는 재단(예: /cntf/)은 그 경로 안 링크만
-        return !prefix || prefix.length < 3 || u.pathname.split('/')[1] === prefix;
+        return !usePrefix || prefix.length < 3 || u.pathname.split('/')[1] === prefix;
       } catch { return false; }
     });
     for (const re of RELATED_BOARD_PATTERNS) {
@@ -191,15 +208,26 @@ function findMainRedirect(html, pageUrl, domain) {
 }
 
 // ========== 검증 ==========
+// 홈페이지(메인) 주소는 최신글 목록이 섞여 있어 게시판으로 착각하기 쉬움 → 게시판 후보에서 제외
+function isHomeLike(url) {
+  try {
+    const p = new URL(url).pathname.replace(/\/+$/, '').toLowerCase();
+    return p === '' || /^\/(index|main|kor|kr|ko|home|intro)(\.\w+)?$/.test(p) || /\/(main|index)\/view$/.test(p)
+      || /^\/(kor|kr|ko|html\/kr|html\/kor)\/(index|main)(\.\w+)?$/.test(p) || /^\/(html\/)?(kr|kor)$/.test(p);
+  } catch { return false; }
+}
+
 async function verifyEminwon(origin) {
   const url = eminwonListUrl(origin, 20);
-  const { html } = await fetchPage(url, { retries: 0, timeout: 10000 });
+  const { html } = await fetchPage(url, { retries: 0, timeout: 25000 });
   const { rows } = parseEminwon(html, origin);
   return rows;
 }
 
 async function verifyBoard(url) {
+  if (isHomeLike(url)) return { rows: 0, html: '', url };
   const { html, finalUrl } = await fetchPage(url, { retries: 0 });
+  if (isHomeLike(finalUrl)) return { rows: 0, html, url: finalUrl }; // 메뉴가 홈으로 되돌아간 경우
   let { rows } = scanBoard(html, finalUrl);
   let boardUrl = finalUrl;
   if (rows < 3) {
