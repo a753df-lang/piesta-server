@@ -20,12 +20,9 @@ const DEFAULT_REGIONS = (process.env.DEFAULT_REGIONS ||
   '논산,부여,공주,서천,보령,청양,익산,군산,김제,전주,완주')
   .split(',').map(s => s.trim()).filter(Boolean);
 
-// 자동 탐색 외 추가 사이트 (범용 스캐너로 읽음 - 선택자 불필요)
-const SITES = [
-  { id: 'nonsan-cntf', region: '논산', name: '논산문화관광재단(공지사항)', listUrl: 'https://www.nonsan.go.kr/cntf/html/sub05/0501.html' },
-  { id: 'nonsan-cntf-support', region: '논산', name: '논산문화관광재단(지원사업공모)', listUrl: 'https://www.nonsan.go.kr/cntf/html/sub05/0502.html' },
-  { id: 'nonsan-cntf-bid', region: '논산', name: '논산문화관광재단(입찰공고)', listUrl: 'https://www.nonsan.go.kr/cntf/html/sub05/0503.html' },
-  { id: 'nonsan-cntf-press', region: '논산', name: '논산문화관광재단(보도자료)', listUrl: 'https://www.nonsan.go.kr/cntf/html/sub05/0505.html' },
-];
+// 자동 탐색 외에 꼭 따로 볼 사이트가 있으면 여기에 추가 (범용 스캐너로 읽음 - 선택자 불필요)
+// 문화재단 등 관련 기관은 이제 지역 자동 탐색(discover.js 의 RELATED_SEEDS / 홈페이지 링크)이 찾아줌
+// 예: { id: 'my-site', region: '논산', name: '사이트 이름', listUrl: 'https://.../list.do' }
+const SITES = [];
 
 module.exports = { SITES, KEYWORDS, DEFAULT_REGIONS };

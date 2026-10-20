@@ -44,7 +44,97 @@ function collectAnchors(html, pageUrl) {
     const url = safeUrl(href, pageUrl);
     if (url) list.push({ text, url });
   });
+  // 관련 사이트/패밀리 사이트 선택 상자
+  $('option').each((_, o) => {
+    const v = ($(o).attr('value') || '').trim();
+    if (!/^https?:\/\//i.test(v)) return;
+    const url = safeUrl(v, pageUrl);
+    if (url) list.push({ text: $(o).text().replace(/\s+/g, ' ').trim(), url });
+  });
   return list;
+}
+
+// ========== 관련 기관 (문화재단 등) ==========
+// 시청 홈페이지의 링크/패밀리사이트에서 이 이름이 보이면 관련 기관으로 보고 같이 크롤링
+const RELATED_RE = /문화관광재단|문화재단|관광재단|문화원|축제\s*(추진)?\s*위원회|축제조직위|관광공사|청소년\s*재단|평생학습/;
+const RELATED_BOARD_PATTERNS = [
+  /^공지사항$/, /^(공지|알림|새소식|알림마당)$/, /공지사항/,
+  /^(공모|모집)/, /공모\s*사업|지원\s*사업|모집\s*공고|참여\s*모집|셀러/, /^입찰/, /^공고$/,
+];
+// 홈페이지에서 링크를 못 찾을 때를 위한 알려진 관련 기관 (지자체 도메인 → 기관)
+const RELATED_SEEDS = {
+  'nonsan.go.kr': [{ name: '논산문화관광재단', url: 'https://www.nonsan.go.kr/cntf/', boards: [
+    'https://www.nonsan.go.kr/cntf/html/sub05/0501.html', 'https://www.nonsan.go.kr/cntf/html/sub05/0502.html',
+    'https://www.nonsan.go.kr/cntf/html/sub05/0503.html'] }],
+  'gongju.go.kr': [{ name: '공주문화관광재단', url: 'https://www.gongjucf.or.kr/' }],
+  'seocheon.go.kr': [{ name: '서천문화관광재단', url: 'https://www.seocheonctf.or.kr/' }],
+  'iksan.go.kr': [{ name: '익산문화관광재단', url: 'https://www.ictf.or.kr/' }],
+  'jeonju.go.kr': [{ name: '전주문화재단', url: 'https://www.jjcf.or.kr/' }],
+};
+const MAX_RELATED_SITES = 3;
+const MAX_BOARDS_PER_RELATED = 3;
+
+function siteKey(url) {
+  try { const u = new URL(url); return u.hostname.replace(/^www\./, '') + '/' + (u.pathname.split('/')[1] || ''); }
+  catch { return url; }
+}
+
+// 관련 기관 후보 목록 (홈페이지 링크 + 알려진 기관)
+function findRelatedCandidates(anchors, domain) {
+  const out = [];
+  const seen = new Set();
+  const add = (c) => { const k = siteKey(c.url); if (seen.has(k)) return; seen.add(k); out.push(c); };
+  for (const seed of RELATED_SEEDS[domain] || []) add(seed);
+  for (const a of anchors) {
+    if (!a.text || a.text.length > 25 || !RELATED_RE.test(a.text)) continue;
+    if (/한국|국립|중앙|전국/.test(a.text)) continue; // 전국 단위 기관 제외
+    add({ name: a.text.replace(/\s*(바로가기|새창|새 창|열림)\s*/g, '').trim(), url: a.url });
+  }
+  return out.slice(0, MAX_RELATED_SITES + 2);
+}
+
+// 관련 기관 한 곳: 홈페이지에서 공지/공모/모집/입찰 게시판을 찾아 검증
+async function discoverRelatedSite(site, log, usedUrls) {
+  const found = [];
+  let candidates = (site.boards || []).slice();
+  try {
+    const home = await fetchPage(site.url, { retries: 0 });
+    const host = new URL(home.finalUrl).hostname;
+    const prefix = new URL(site.url).pathname.split('/')[1] || '';
+    const anchors = collectAnchors(home.html, home.finalUrl).filter(a => {
+      try {
+        const u = new URL(a.url);
+        if (u.hostname !== host) return false;
+        // 시청 도메인 아래 하위 경로로 운영되는 재단(예: /cntf/)은 그 경로 안 링크만
+        return !prefix || prefix.length < 3 || u.pathname.split('/')[1] === prefix;
+      } catch { return false; }
+    });
+    for (const re of RELATED_BOARD_PATTERNS) {
+      for (const a of anchors) {
+        if (a.text.length > 15 || !re.test(a.text)) continue;
+        if (OLD_ARCHIVE_TEXT.test(a.text) || OLD_ARCHIVE_URL.test(a.url)) continue;
+        if (!candidates.includes(a.url)) candidates.push(a.url);
+      }
+    }
+  } catch (e) {
+    log.push(`관련기관 접속 실패 ${site.name}: ${e.message}`);
+    if (!candidates.length) return found;
+  }
+  for (const c of candidates.slice(0, 6)) {
+    if (found.length >= MAX_BOARDS_PER_RELATED) break;
+    try {
+      const v = await verifyBoard(c);
+      if (v.rows >= 3 && !usedUrls.has(v.url)) {
+        usedUrls.add(v.url);
+        found.push({ kind: 'board', group: 'related', name: site.name, url: v.url, rows: v.rows });
+        log.push(`관련기관 연결: ${site.name} ${v.url} (${v.rows}줄)`);
+      }
+    } catch {}
+    await sleep(400);
+  }
+  // 같은 기관 게시판이 여러 개면 이름 뒤에 번호
+  if (found.length > 1) found.forEach((f, i) => { f.name = `${site.name} ${i + 1}`; });
+  return found;
 }
 
 function sameSite(url, domain) {
@@ -177,7 +267,7 @@ async function discoverRegion(regionInput) {
     try {
       const rows = await verifyEminwon(origin);
       if (rows > 0) {
-        sources.push({ kind: 'eminwon', name: `${label} 고시공고`, url: origin, rows });
+        sources.push({ kind: 'eminwon', group: 'gov', name: `${label} 고시공고`, url: origin, rows });
         log.push(`고시공고 연결: ${origin} (${rows}건)`);
         break;
       }
@@ -192,7 +282,7 @@ async function discoverRegion(regionInput) {
       const v = await verifyBoard(n);
       if (v.rows >= 3 && !boardUrls.has(v.url)) {
         boardUrls.add(v.url);
-        sources.push({ kind: 'board', name: `${label} 공지사항`, url: v.url, rows: v.rows });
+        sources.push({ kind: 'board', group: 'gov', name: `${label} 공지사항`, url: v.url, rows: v.rows });
         log.push(`공지사항 연결: ${v.url} (${v.rows}줄)`);
         break; // 공지사항은 하나면 충분
       } else {
@@ -209,12 +299,36 @@ async function discoverRegion(regionInput) {
         const v = await verifyBoard(g);
         if (v.rows >= 3 && !boardUrls.has(v.url)) {
           boardUrls.add(v.url);
-          sources.push({ kind: 'board', name: `${label} 고시공고`, url: v.url, rows: v.rows });
+          sources.push({ kind: 'board', group: 'gov', name: `${label} 고시공고`, url: v.url, rows: v.rows });
           log.push(`고시공고(일반 게시판) 연결: ${v.url}`);
           break;
         }
       } catch {}
     }
+  }
+
+  // 4) 시청 입찰공고 (푸드트럭 영업장 임대 등이 입찰로 올라오는 경우)
+  const bidLinks = pickLinks(anchors, domain, [/^입찰\s*공고$/, /^입찰\s*정보$/], 2);
+  for (const b of bidLinks) {
+    try {
+      const v = await verifyBoard(b);
+      if (v.rows >= 3 && !boardUrls.has(v.url)) {
+        boardUrls.add(v.url);
+        sources.push({ kind: 'board', group: 'gov', name: `${label} 입찰공고`, url: v.url, rows: v.rows });
+        log.push(`입찰공고 연결: ${v.url}`);
+        break;
+      }
+    } catch {}
+  }
+
+  // 5) 관련 기관 (문화재단·문화관광재단·축제위원회 등)
+  const related = findRelatedCandidates(anchors, domain);
+  log.push(`관련기관 후보: ${related.map(r => r.name).join(', ') || '없음'}`);
+  let relatedSites = 0;
+  for (const site of related) {
+    if (relatedSites >= MAX_RELATED_SITES) break;
+    const boards = await discoverRelatedSite(site, log, boardUrls);
+    if (boards.length) { sources.push(...boards); relatedSites++; }
   }
 
   if (!home) log.push('홈페이지 접속 불가 - 도메인 오류이거나 해외 접속 차단 가능성');

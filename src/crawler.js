@@ -65,13 +65,18 @@ async function discoverAndSave(name) {
     return { status: 'unknown', message: row.message, sources: [], log: [] };
   }
   const result = await discoverRegion({ name: row.full_name, domain: row.domain });
-  const hasGosi = result.sources.some(s => s.kind === 'eminwon' || /고시공고/.test(s.name));
-  const hasNotice = result.sources.some(s => /공지사항/.test(s.name));
+  const gov = result.sources.filter(s => s.group !== 'related');
+  const relatedNames = [...new Set(result.sources.filter(s => s.group === 'related').map(s => s.name.replace(/\s\d+$/, '')))];
+  const hasGosi = gov.some(s => s.kind === 'eminwon' || /고시공고/.test(s.name));
+  const hasNotice = gov.some(s => /공지사항/.test(s.name));
+  const govParts = [hasGosi && '고시공고', hasNotice && '공지사항'].filter(Boolean);
+  const summary = [govParts.length ? '시청 ' + govParts.join('·') : '', relatedNames.join(', ')].filter(Boolean).join(' + ');
   let status, message;
-  if (hasGosi && hasNotice) { status = 'ok'; message = '고시공고·공지사항 자동 연결됨'; }
+  if (hasGosi && hasNotice) { status = 'ok'; message = `${summary} 자동 연결됨`; }
   else if (result.sources.length) {
     status = 'partial';
-    message = hasGosi ? '고시공고만 연결됨 (공지사항 자동 인식 실패)' : '공지사항만 연결됨 (고시공고 자동 인식 실패)';
+    const missing = ['고시공고', '공지사항'].filter(x => !govParts.includes(x)).join('·');
+    message = `${summary} 연결됨 (시청 ${missing} 자동 인식 실패)`;
   } else {
     status = 'failed';
     message = result.log.find(l => /접속 불가/.test(l)) || '자동 연결 실패 - 사이트를 직접 추가해 주세요';

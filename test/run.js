@@ -18,6 +18,7 @@ const ROUTES = [
   [/\/kor\/html\/sub03\/030101\.html/, 'nonsan-notice.html'],
   [/\/kor\/html\/sub03\/03010201\.html/, 'nonsan-gosi.html'],
   [/^https:\/\/eminwon\.nonsan21\.net\/emwp\//, 'eminwon-nonsan.html'],
+  [/\/cntf\/html\/sub05\/0501\.html/, 'nonsan-cntf.html'],
 ];
 const requested = [];
 scanner.fetchPage = async (url) => {
@@ -95,6 +96,28 @@ test('지난 고시공고(보관 메뉴) 링크는 고르지 않음', async () =
   assert.ok(!seen.some(u => /PREVIOUS|old\.do/.test(u)), JSON.stringify(seen));
 });
 
+test('홈페이지 패밀리사이트(선택상자)에서 문화재단 찾아 공지·공모 게시판 연결', async () => {
+  const dir = path.join(__dirname, 'fixtures');
+  const home = '<select><option value="">패밀리사이트</option><option value="https://www.cacf.or.kr/">천안문화재단</option><option value="https://www.kcaf.or.kr/">한국문화예술위원회</option></select>'
+    + Array.from({ length: 45 }, (_, i) => `<a href="/m${i}.do">메뉴${i}</a>`).join('');
+  const cf = '<a href="/bbs/notice/list.do">공지사항</a><a href="/bbs/contest/list.do">공모사업</a><a href="https://other.com/">외부</a>';
+  fs.writeFileSync(path.join(dir, '_t-home.html'), home);
+  fs.writeFileSync(path.join(dir, '_t-cf.html'), cf);
+  const extra = [
+    [/^https:\/\/www\.cheonan\.go\.kr\/$/, '_t-home.html'],
+    [/^https:\/\/www\.cacf\.or\.kr\/$/, '_t-cf.html'],
+    [/^https:\/\/www\.cacf\.or\.kr\/bbs\/(notice|contest)\/list\.do$/, 'nonsan-notice.html'],
+  ];
+  ROUTES.unshift(...extra);
+  let r;
+  try { r = await discoverRegion('천안'); }
+  finally { ROUTES.splice(0, extra.length); fs.unlinkSync(path.join(dir, '_t-home.html')); fs.unlinkSync(path.join(dir, '_t-cf.html')); }
+  const rel = r.sources.filter(x => x.group === 'related');
+  assert.deepStrictEqual(rel.map(x => x.url).sort(), ['https://www.cacf.or.kr/bbs/contest/list.do', 'https://www.cacf.or.kr/bbs/notice/list.do'], JSON.stringify(r.log, null, 1));
+  assert.ok(rel.every(x => x.name.startsWith('천안문화재단')));
+  assert.ok(!r.log.some(l => l.includes('한국문화예술위원회')));
+});
+
 test('지역 이름 매칭', () => {
   assert.strictEqual(findRegion('논산').name, '논산시');
   assert.strictEqual(findRegion('논산시').domain, 'nonsan.go.kr');
@@ -105,28 +128,34 @@ test('지역 이름 매칭', () => {
   assert.strictEqual(findRegion('없는동네'), null);
 });
 
-test('자동 탐색: 논산 → 고시공고(새올) + 공지사항', async () => {
+test('자동 탐색: 논산 → 시청 고시공고(새올) + 공지사항 + 문화관광재단', async () => {
   const r = await discoverRegion('논산');
-  const kinds = r.sources.map(s => s.kind).sort();
-  assert.deepStrictEqual(kinds, ['board', 'eminwon'], JSON.stringify(r.log, null, 1));
+  const gov = r.sources.filter(s => s.group === 'gov').map(s => s.kind).sort();
+  assert.deepStrictEqual(gov, ['board', 'eminwon'], JSON.stringify(r.log, null, 1));
   assert.strictEqual(r.sources.find(s => s.kind === 'eminwon').url, 'https://eminwon.nonsan21.net');
-  assert.strictEqual(r.sources.find(s => s.kind === 'board').url, 'https://www.nonsan.go.kr/kor/html/sub03/030101.html');
+  assert.strictEqual(r.sources.find(s => s.group === 'gov' && s.kind === 'board').url, 'https://www.nonsan.go.kr/kor/html/sub03/030101.html');
+  const rel = r.sources.filter(s => s.group === 'related');
+  assert.strictEqual(rel.length, 1, JSON.stringify(r.log, null, 1));
+  assert.strictEqual(rel[0].name, '논산문화관광재단');
+  assert.match(rel[0].url, /\/cntf\/html\/sub05\/0501\.html/);
 });
 
-test('전체 크롤: 키워드 공고만 저장, 중복 없음, 실패 사이트는 error 로 기록', async () => {
+test('전체 크롤: 시청·재단의 키워드 공고만 저장, 중복 없음, 상태 메시지', async () => {
   const { crawlAll } = require('../src/crawler');
   const { getNotices, getSources, getRegion } = require('../src/db');
-  const first = await crawlAll();
-  const notices = getNotices({ limit: 50 });
-  const titles = notices.map(n => n.title).sort();
-  assert.deepStrictEqual(titles, ['2026 강경젓갈축제 플리마켓 셀러 모집', '2026 강경젓갈축제 푸드트럭 참가자 모집 공고'].sort());
-  assert.strictEqual(getRegion('논산').status, 'ok');
+  await crawlAll();
+  const titles = getNotices({ limit: 50 }).map(n => n.title).sort();
+  assert.deepStrictEqual(titles, [
+    '2026 강경젓갈축제 푸드트럭 참가 모집',
+    '2026 강경젓갈축제 플리마켓 셀러 모집',
+    '2026 강경젓갈축제 푸드트럭 참가자 모집 공고',
+  ].sort());
+  const reg = getRegion('논산');
+  assert.strictEqual(reg.status, 'ok');
+  assert.strictEqual(reg.message, '시청 고시공고·공지사항 + 논산문화관광재단 자동 연결됨');
   assert.ok(getSources('논산').every(s => s.status === 'ok'));
-  // 고정 사이트(문화재단)는 fixture 가 없으므로 error 로 집계돼야 함
-  assert.ok(first.errors >= 1);
   const second = await crawlAll();
   assert.strictEqual(second.totalNew, 0);
-  assert.strictEqual(getNotices({ limit: 50 }).length, notices.length);
 });
 
 test.after(() => { try { fs.unlinkSync(process.env.DB_PATH); } catch {} });
