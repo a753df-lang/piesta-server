@@ -185,7 +185,8 @@ function findMainRedirect(html, pageUrl, domain) {
   if (js) return safeUrl(js[1], pageUrl);
   const anchors = collectAnchors(html, pageUrl).filter(a => sameSite(a.url, domain));
   const main = anchors.find(a => /^(한국어|국문|korean|kor|메인|홈페이지|바로가기)/i.test(a.text))
-    || anchors.find(a => /\/(kor|kr|ko|main|index)(\.do|\.html|\.jsp|\/|$)/i.test(a.url));
+    || anchors.find(a => /(홈페이지|누리집|메인\s*페이지)[^]{0,10}바로\s*가기/.test(a.text))
+    || anchors.find(a => /\/(kor|kr|ko|main|index)(\.do|\.html|\.jsp|\/|$)/i.test(a.url) && !/intro/i.test(a.url));
   return main ? main.url : null;
 }
 
@@ -241,7 +242,11 @@ async function discoverRegion(regionInput) {
   if (home) {
     pages.push(home);
     anchors = collectAnchors(home.html, home.finalUrl);
-    if (anchors.filter(a => sameSite(a.url, domain)).length < 40) {
+    // 인트로(첫 화면) 페이지면 실제 메인으로 이동: 링크가 적거나, 주소에 intro 가 있거나, 공지·고시 메뉴가 없을 때
+    const looksIntro = anchors.filter(a => sameSite(a.url, domain)).length < 40
+      || /intro/i.test(home.finalUrl)
+      || (!pickLinks(anchors, domain, NOTICE_PATTERNS, 1).length && !pickLinks(anchors, domain, GOSI_PATTERNS, 1).length);
+    if (looksIntro) {
       const next = findMainRedirect(home.html, home.finalUrl, domain);
       if (next && next !== home.finalUrl) {
         try {

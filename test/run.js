@@ -119,6 +119,23 @@ test('홈페이지 패밀리사이트(선택상자)에서 문화재단 찾아 �
   assert.ok(!r.log.some(l => /한국문화예술위원회|평생학습관|청소년재단/.test(l)), JSON.stringify(r.log));
 });
 
+test('부여처럼 인트로 페이지가 먼저 뜨면 메인으로 들어가서 공지사항·고시공고 연결', async () => {
+  const extra = [
+    [/^https:\/\/www\.buyeo\.go\.kr\/$/, 'buyeo-intro.html'],
+    [/^https:\/\/www\.buyeo\.go\.kr\/html\/kr\/$/, 'buyeo-main.html'],
+    [/buyeo\.go\.kr\/_prog\/_board\/\?code=news_01/, 'nonsan-notice.html'],
+    [/buyeo\.go\.kr\/html\/kr\/news\/news_040202\.html/, 'gongju-gosi.html'],
+  ];
+  ROUTES.unshift(...extra);
+  let r;
+  try { r = await discoverRegion('부여'); } finally { ROUTES.splice(0, extra.length); }
+  const gov = r.sources.filter(x => x.group === 'gov');
+  assert.ok(gov.some(x => x.name === '부여군 공지사항' && /code=news_01/.test(x.url)), JSON.stringify(r.log, null, 1));
+  assert.ok(gov.some(x => x.name === '부여군 고시공고'), JSON.stringify(r.log, null, 1));
+  assert.ok(!r.sources.some(x => /평생학습/.test(x.name)));
+  assert.ok(r.log.some(l => l.startsWith('메인 이동: https://www.buyeo.go.kr/html/kr/')));
+});
+
 test('지역 이름 매칭', () => {
   assert.strictEqual(findRegion('논산').name, '논산시');
   assert.strictEqual(findRegion('논산시').domain, 'nonsan.go.kr');
